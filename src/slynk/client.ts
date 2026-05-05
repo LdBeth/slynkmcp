@@ -1,0 +1,311 @@
+/**
+ * Slynk client. Maintains a single TCP connection, dispatches incoming events
+ * to per-request continuations and to side-channel handlers.
+ *
+ * RPC model: every `rex` call generates a fresh request id, sends an
+ * `(:emacs-rex FORM PACKAGE THREAD ID)` frame, and resolves when the matching
+ * `(:return (:ok ...) ID)` frame arrives. `(:return (:abort REASON) ID)`
+ * rejects the promise. If the request triggers a debugger entry, it stays
+ * pending until the debugger is exited (typically via `debug_invoke_restart`
+ * or `debug_abort`) — at which point Slynk sends `:debug-return` and then
+ * `:return`.
+ */
+
+import { encodeFrame, readFrames } from "./framing.ts";
+import {
+  asList,
+  asNumber,
+  isKw,
+  Keyword,
+  kw,
+  print,
+  read,
+  type Sexp,
+  Sym,
+  sym,
+  T,
+} from "./sexp.ts";
+
+export type DebugInfo = {
+  thread: number;
+  level: number;
+  /** [conditionMessage, conditionType, extras] */
+  condition: { message: string; type: string };
+  /** Each restart: [name, description] */
+  restarts: { name: string; description: string }[];
+  /** Frames as printed by Slynk: [index, "frame description"] */
+  frames: { index: number; description: string }[];
+  /** continuation ids that are waiting on this debug level */
+  pendingIds: number[];
+};
+
+export interface SlynkEvents {
+  onWriteString?: (text: string, target: Sexp) => void;
+  onChannelSend?: (channelId: number, message: Sexp) => void;
+  onDebugActivate?: (info: DebugInfo) => void;
+  onDebugReturn?: (thread: number, level: number) => void;
+  onNewFeatures?: (features: Sexp) => void;
+  onIndentationUpdate?: (updates: Sexp) => void;
+  onDisconnect?: (err?: Error) => void;
+  /** Anything we don't recognize — useful for logging */
+  onUnknown?: (event: Sexp) => void;
+}
+
+interface Pending {
+  resolve: (value: Sexp) => void;
+  reject: (err: Error) => void;
+}
+
+export interface RexOptions {
+  /** Common Lisp package name; defaults to "COMMON-LISP-USER" */
+  pkg?: string;
+  /** Slynk thread designator; "t" (default), ":repl-thread", or a number */
+  thread?: "t" | ":repl-thread" | number;
+}
+
+export class SlynkClient {
+  #conn: Deno.TcpConn | null = null;
+  #writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  #nextId = 1;
+  #pending = new Map<number, Pending>();
+  #readerTask: Promise<void> | null = null;
+
+  /** Stack of active debug levels (innermost last). */
+  debugStack: DebugInfo[] = [];
+
+  constructor(public readonly events: SlynkEvents = {}) {}
+
+  async connect(host: string, port: number): Promise<void> {
+    this.#conn = await Deno.connect({ hostname: host, port, transport: "tcp" });
+    this.#writer = this.#conn.writable.getWriter();
+    this.#readerTask = this.#readLoop(this.#conn.readable).catch((err) => {
+      this.events.onDisconnect?.(err instanceof Error ? err : new Error(String(err)));
+    });
+  }
+
+  async close(): Promise<void> {
+    try {
+      this.#writer?.releaseLock();
+    } catch { /* noop */ }
+    try {
+      this.#conn?.close();
+    } catch { /* noop */ }
+    this.#conn = null;
+    this.#writer = null;
+    if (this.#readerTask) await this.#readerTask.catch(() => {});
+  }
+
+  /** Send `(:emacs-rex FORM PKG THREAD ID)` and await the matching :return. */
+  rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
+    if (!this.#writer) throw new Error("Not connected");
+    const id = this.#nextId++;
+    const pkg = opts.pkg ?? "COMMON-LISP-USER";
+    const thread: Sexp = opts.thread === undefined || opts.thread === "t"
+      ? T
+      : typeof opts.thread === "number"
+      ? opts.thread
+      : new Keyword(opts.thread.replace(/^:/, ""));
+    const message: Sexp = [kw("emacs-rex"), form, pkg, thread, id];
+    const promise = new Promise<Sexp>((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+    });
+    this.#send(print(message));
+    return promise;
+  }
+
+  /** Send a raw `:emacs-interrupt` for the given thread (or :repl-thread). */
+  interrupt(thread: "t" | ":repl-thread" | number = ":repl-thread"): void {
+    const t: Sexp = thread === "t"
+      ? T
+      : typeof thread === "number"
+      ? thread
+      : new Keyword(thread.replace(/^:/, ""));
+    this.#send(print([kw("emacs-interrupt"), t]));
+  }
+
+  /** Send a raw channel message. */
+  channelSend(channelId: number, message: Sexp): void {
+    this.#send(print([kw("emacs-channel-send"), channelId, message]));
+  }
+
+  // ---- internals ----
+
+  #send(payload: string): void {
+    if (!this.#writer) throw new Error("Not connected");
+    void this.#writer.write(encodeFrame(payload));
+  }
+
+  async #readLoop(stream: ReadableStream<Uint8Array>): Promise<void> {
+    for await (const frame of readFrames(stream)) {
+      let parsed: Sexp;
+      try {
+        parsed = read(frame);
+      } catch (err) {
+        console.error("Slynk: failed to parse frame:", frame, err);
+        continue;
+      }
+      this.#dispatch(parsed);
+    }
+    // Stream ended — fail any pending requests.
+    for (const [, p] of this.#pending) {
+      p.reject(new Error("Slynk connection closed"));
+    }
+    this.#pending.clear();
+  }
+
+  #dispatch(event: Sexp): void {
+    if (!Array.isArray(event) || event.length === 0) {
+      this.events.onUnknown?.(event);
+      return;
+    }
+    const head = event[0];
+    if (!(head instanceof Keyword) && !(head instanceof Sym)) {
+      this.events.onUnknown?.(event);
+      return;
+    }
+    const tag = head instanceof Keyword ? head.name : head.name;
+
+    switch (tag) {
+      case "return": {
+        // (:return (:ok VALUE) ID)  or  (:return (:abort REASON) ID)
+        const result = asList(event[1]!, ":return result");
+        const id = asNumber(event[2]!, ":return id");
+        const p = this.#pending.get(id);
+        if (!p) return;
+        this.#pending.delete(id);
+        const status = result[0];
+        if (isKw(status, "ok")) {
+          p.resolve(result[1] ?? []);
+        } else if (isKw(status, "abort")) {
+          const reason = result[1];
+          p.reject(
+            new Error(`Slynk abort: ${typeof reason === "string" ? reason : print(reason ?? [])}`),
+          );
+        } else {
+          p.reject(new Error(`Unknown :return status: ${print(result)}`));
+        }
+        return;
+      }
+
+      case "debug": {
+        // (:debug THREAD LEVEL CONDITION RESTARTS FRAMES PENDING-IDS)
+        const thread = asNumber(event[1]!, ":debug thread");
+        const level = asNumber(event[2]!, ":debug level");
+        const condList = asList(event[3]!, ":debug condition");
+        const restartList = asList(event[4]!, ":debug restarts");
+        const frameList = asList(event[5]!, ":debug frames");
+        const pendingList = asList(event[6] ?? [], ":debug pending");
+
+        const info: DebugInfo = {
+          thread,
+          level,
+          condition: {
+            message: typeof condList[0] === "string" ? condList[0] : print(condList[0] ?? []),
+            type: typeof condList[1] === "string" ? condList[1] : print(condList[1] ?? []),
+          },
+          restarts: restartList.map((r) => {
+            const rl = asList(r, "restart");
+            return {
+              name: typeof rl[0] === "string" ? rl[0] : print(rl[0] ?? []),
+              description: typeof rl[1] === "string" ? rl[1] : print(rl[1] ?? []),
+            };
+          }),
+          frames: frameList.map((f) => {
+            const fl = asList(f, "frame");
+            return {
+              index: typeof fl[0] === "number" ? fl[0] : 0,
+              description: typeof fl[1] === "string" ? fl[1] : print(fl[1] ?? []),
+            };
+          }),
+          pendingIds: pendingList.map((p) => (typeof p === "number" ? p : 0)),
+        };
+        this.debugStack.push(info);
+        return;
+      }
+
+      case "debug-activate": {
+        // (:debug-activate THREAD LEVEL [SELECT])
+        const top = this.debugStack[this.debugStack.length - 1];
+        if (top) this.events.onDebugActivate?.(top);
+        return;
+      }
+
+      case "debug-return": {
+        // (:debug-return THREAD LEVEL STEPPING)
+        const thread = asNumber(event[1]!, ":debug-return thread");
+        const level = asNumber(event[2]!, ":debug-return level");
+        // Pop the matching level (and anything above, defensively).
+        while (
+          this.debugStack.length && this.debugStack[this.debugStack.length - 1]!.level >= level
+        ) {
+          this.debugStack.pop();
+        }
+        this.events.onDebugReturn?.(thread, level);
+        return;
+      }
+
+      case "write-string": {
+        // (:write-string TEXT [TARGET])
+        const text = typeof event[1] === "string" ? event[1] : "";
+        this.events.onWriteString?.(text, event[2] ?? []);
+        return;
+      }
+
+      case "channel-send": {
+        // (:channel-send CHANNEL-ID MESSAGE)
+        const cid = asNumber(event[1]!, ":channel-send id");
+        this.events.onChannelSend?.(cid, event[2] ?? []);
+        return;
+      }
+
+      case "new-features":
+        this.events.onNewFeatures?.(event[1] ?? []);
+        return;
+
+      case "indentation-update":
+        this.events.onIndentationUpdate?.(event[1] ?? []);
+        return;
+
+      case "reader-error": {
+        // (:reader-error PACKET CONDITION) — Slynk failed to parse our last
+        // request. There's no id in the event, so fail the most recent pending
+        // rex (highest id) — that's the one that just went out the wire.
+        const reason = typeof event[2] === "string" ? event[2] : print(event[2] ?? []);
+        let maxId = -1;
+        for (const id of this.#pending.keys()) if (id > maxId) maxId = id;
+        if (maxId >= 0) {
+          const p = this.#pending.get(maxId)!;
+          this.#pending.delete(maxId);
+          p.reject(new Error(`Slynk reader-error: ${reason}`));
+        }
+        return;
+      }
+
+      case "ping": {
+        // (:ping THREAD TAG) — must echo (:emacs-pong THREAD TAG)
+        const t = event[1] ?? T;
+        const tag = event[2] ?? 0;
+        this.#send(print([kw("emacs-pong"), t, tag]));
+        return;
+      }
+
+      case "read-string":
+      case "read-from-minibuffer":
+      case "y-or-n-p":
+      case "eval-no-wait":
+      case "background-message":
+      case "inspect":
+      case "presentation-start":
+      case "presentation-end":
+        // Not used by the MCP bridge; ignore quietly.
+        return;
+
+      default:
+        this.events.onUnknown?.(event);
+        return;
+    }
+  }
+}
+
+// Re-exports for convenience.
+export { kw, print, read, type Sexp, sym };

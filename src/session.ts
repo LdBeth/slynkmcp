@@ -1,0 +1,367 @@
+/**
+ * High-level session: owns the SlynkClient, bootstraps the connection,
+ * creates an mREPL channel, captures per-request output, and exposes a
+ * convenient API for MCP tools.
+ *
+ * Output capture: Slynk's `:write-string` and channel-send messages arrive
+ * asynchronously, not tied to a request id, so we can't perfectly attribute
+ * them. The pragmatic approach used here: serialize tool calls that need
+ * output capture, and accumulate everything between rex-send and rex-resolve
+ * into a single buffer.
+ */
+
+import { SlynkClient } from "./slynk/client.ts";
+import { asList, asNumber, type Keyword, kw, print, type Sexp, Sym, sym, T } from "./slynk/sexp.ts";
+
+export interface SessionOptions {
+  host: string;
+  port: number;
+  defaultPackage: string;
+}
+
+export interface ConnectionInfo {
+  pid: number;
+  lispImplementation: { type: string; name: string; version: string };
+  machine: { instance: string; type: string };
+  features: string[];
+  packageName: string;
+  prompt: string;
+  version: string;
+  raw: Sexp;
+}
+
+export interface EvalResult {
+  /** Printed result (the value Lisp returned, as a string). */
+  value: string;
+  /** Captured stdout / mREPL output during the call. */
+  output: string;
+}
+
+export class Session {
+  client: SlynkClient;
+  connectionInfo: ConnectionInfo | null = null;
+  mreplChannelId: number | null = null;
+  mreplRemoteId: number | null = null;
+  defaultPackage: string;
+
+  /** Currently-capturing output buffer (set while a tool call is in flight). */
+  #captureBuf: string[] | null = null;
+  /** Mutex queue for output-capturing calls. */
+  #queue: Promise<unknown> = Promise.resolve();
+
+  constructor(opts: SessionOptions) {
+    this.defaultPackage = opts.defaultPackage;
+    this.client = new SlynkClient({
+      onWriteString: (text) => {
+        if (this.#captureBuf) this.#captureBuf.push(text);
+      },
+      onChannelSend: (_cid, msg) => {
+        // mREPL sends (:write-values ...) and (:write-string TEXT) channel msgs
+        if (!Array.isArray(msg) || msg.length === 0) return;
+        const head = msg[0];
+        if (!(head instanceof Sym || (head as Keyword)?.name)) return;
+        const tag = head instanceof Sym ? head.name : (head as Keyword).name;
+        if (tag === "write-string" && typeof msg[1] === "string") {
+          if (this.#captureBuf) this.#captureBuf.push(msg[1]);
+        }
+        // Other channel messages (:prompt, :evaluation-aborted) are diagnostic;
+        // we surface eval status via the rex return value, not the channel.
+      },
+      onDebugActivate: (info) => {
+        // Auto-abort policy: invoke the first ABORT-ish restart so the rex
+        // returns instead of leaving Claude wedged in a debugger it can't drive.
+        const abortIdx = info.restarts.findIndex((r) => /^abort$/i.test(r.name));
+        const idx = abortIdx >= 0 ? abortIdx : info.restarts.length - 1;
+        if (idx >= 0) {
+          this.client.rex(
+            [sym("slynk:invoke-nth-restart-for-emacs"), info.level, idx],
+            { thread: info.thread },
+          ).catch(() => {});
+        }
+      },
+    });
+  }
+
+  async start(host: string, port: number): Promise<void> {
+    await this.client.connect(host, port);
+    const info = await this.client.rex([sym("slynk:connection-info")]);
+    this.connectionInfo = parseConnectionInfo(info);
+
+    // Load mREPL + indentation + apropos contribs.
+    await this.client.rex(
+      [
+        sym("slynk:slynk-require"),
+        [
+          sym("quote"),
+          [sym("slynk/mrepl"), sym("slynk/indentation"), sym("slynk/apropos")],
+        ],
+      ],
+    ).catch(() => {/* contribs may already be loaded */});
+
+    // Create an mREPL channel.
+    const channelInfo = await this.client.rex(
+      [sym("slynk-mrepl:create-mrepl"), 0],
+      { pkg: this.defaultPackage },
+    ).catch(() => null);
+
+    if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
+      this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
+      this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+    }
+  }
+
+  async stop(): Promise<void> {
+    await this.client.close();
+  }
+
+  /** Run an async block while capturing all incoming write-string output. */
+  withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
+    const run = async () => {
+      const buf: string[] = [];
+      this.#captureBuf = buf;
+      try {
+        const result = await fn();
+        return { result, output: buf.join("") };
+      } finally {
+        this.#captureBuf = null;
+      }
+    };
+    const next = this.#queue.then(run, run);
+    this.#queue = next.catch(() => {});
+    return next as Promise<{ result: T; output: string }>;
+  }
+
+  /** Eval a string in the session's default package, capturing stdout. */
+  async eval(code: string, pkg?: string): Promise<EvalResult> {
+    const p = pkg ?? this.defaultPackage;
+    const { result, output } = await this.withCapture(() =>
+      this.client.rex(
+        [sym("slynk:interactive-eval"), code],
+        { pkg: p },
+      )
+    );
+    return {
+      value: typeof result === "string" ? result : print(result),
+      output,
+    };
+  }
+
+  /**
+   * Compatibility shim — earlier we tried `slynk-mrepl:listener-eval` via rex,
+   * but mREPL drives eval through channel messages, not RPC. Stick with
+   * interactive-eval; output capture still works via the :write-string hook.
+   */
+  listenerEval(code: string, pkg?: string): Promise<EvalResult> {
+    return this.eval(code, pkg);
+  }
+
+  // -------------------------------------------------------------------
+  // Convenience wrappers
+  // -------------------------------------------------------------------
+
+  async compileFile(path: string, load = true): Promise<Sexp> {
+    return await this.client.rex(
+      [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
+      { pkg: this.defaultPackage },
+    );
+  }
+
+  async loadFile(path: string): Promise<Sexp> {
+    return await this.client.rex(
+      [sym("slynk:load-file"), path],
+      { pkg: this.defaultPackage },
+    );
+  }
+
+  async completions(prefix: string, pkg?: string): Promise<string[]> {
+    const p = pkg ?? this.defaultPackage;
+    const result = await this.client.rex(
+      [sym("slynk:simple-completions"), prefix, p],
+      { pkg: p },
+    );
+    if (!Array.isArray(result) || !Array.isArray(result[0])) return [];
+    return (result[0] as Sexp[]).filter((x): x is string => typeof x === "string");
+  }
+
+  async apropos(pattern: string, externalOnly = true): Promise<string> {
+    const result = await this.client.rex(
+      [
+        sym("slynk-apropos:apropos-list-for-emacs"),
+        pattern,
+        externalOnly ? T : [],
+        [],
+        [],
+      ],
+      { pkg: this.defaultPackage },
+    );
+    return print(result);
+  }
+
+  async describe(symbolName: string): Promise<string> {
+    const r = await this.client.rex(
+      [sym("slynk:describe-symbol"), symbolName],
+      { pkg: this.defaultPackage },
+    );
+    return typeof r === "string" ? r : print(r);
+  }
+
+  async documentation(symbolName: string): Promise<string> {
+    const r = await this.client.rex(
+      [sym("slynk:documentation-symbol"), symbolName],
+      { pkg: this.defaultPackage },
+    );
+    return typeof r === "string" ? r : print(r);
+  }
+
+  async arglist(symbolName: string): Promise<string> {
+    const r = await this.client.rex(
+      [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
+      { pkg: this.defaultPackage },
+    );
+    return typeof r === "string" ? r : print(r);
+  }
+
+  async macroexpand(form: string, all = false): Promise<string> {
+    const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
+    const r = await this.client.rex(
+      [sym(op), form],
+      { pkg: this.defaultPackage },
+    );
+    return typeof r === "string" ? r : print(r);
+  }
+
+  async findDefinition(symbolName: string): Promise<Sexp> {
+    return await this.client.rex(
+      [sym("slynk:find-definitions-for-emacs"), symbolName],
+      { pkg: this.defaultPackage },
+    );
+  }
+
+  // ---- Inspector ----
+
+  async inspect(expression: string): Promise<Sexp> {
+    return await this.client.rex(
+      [sym("slynk:init-inspector"), expression],
+      { pkg: this.defaultPackage },
+    );
+  }
+  async inspectorPart(index: number): Promise<Sexp> {
+    return await this.client.rex(
+      [sym("slynk:inspect-nth-part"), index],
+      { pkg: this.defaultPackage },
+    );
+  }
+  async inspectorPop(): Promise<Sexp> {
+    return await this.client.rex([sym("slynk:inspector-pop")], {
+      pkg: this.defaultPackage,
+    });
+  }
+  async inspectorReinspect(): Promise<Sexp> {
+    return await this.client.rex([sym("slynk:inspector-reinspect")], {
+      pkg: this.defaultPackage,
+    });
+  }
+
+  // ---- Debugger ----
+
+  currentDebug() {
+    return this.client.debugStack[this.client.debugStack.length - 1] ?? null;
+  }
+
+  async debugInvokeRestart(restartIndex: number): Promise<Sexp> {
+    const top = this.currentDebug();
+    if (!top) throw new Error("Not in debugger");
+    return await this.client.rex(
+      [sym("slynk:invoke-nth-restart-for-emacs"), top.level, restartIndex],
+      { thread: top.thread },
+    );
+  }
+
+  async debugAbort(): Promise<Sexp> {
+    const top = this.currentDebug();
+    if (!top) throw new Error("Not in debugger");
+    return await this.client.rex(
+      [sym("slynk:throw-to-toplevel")],
+      { thread: top.thread },
+    );
+  }
+
+  async debugFrameLocals(frameIndex: number): Promise<Sexp> {
+    const top = this.currentDebug();
+    if (!top) throw new Error("Not in debugger");
+    return await this.client.rex(
+      [sym("slynk:frame-locals-and-catch-tags"), frameIndex],
+      { thread: top.thread },
+    );
+  }
+
+  async debugFrameSource(frameIndex: number): Promise<Sexp> {
+    const top = this.currentDebug();
+    if (!top) throw new Error("Not in debugger");
+    return await this.client.rex(
+      [sym("slynk:frame-source-location"), frameIndex],
+      { thread: top.thread },
+    );
+  }
+
+  async debugEvalInFrame(frameIndex: number, code: string): Promise<string> {
+    const top = this.currentDebug();
+    if (!top) throw new Error("Not in debugger");
+    const r = await this.client.rex(
+      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
+      { thread: top.thread },
+    );
+    return typeof r === "string" ? r : print(r);
+  }
+
+  interrupt(): void {
+    this.client.interrupt(":repl-thread");
+  }
+}
+
+function parseConnectionInfo(info: Sexp): ConnectionInfo {
+  // Slynk returns a property list: (:pid N :lisp-implementation (...) ...)
+  const plist = asList(info, "connection-info");
+  const get = (k: string): Sexp | undefined => {
+    for (let i = 0; i < plist.length - 1; i += 2) {
+      const key = plist[i];
+      if (key && (key as Keyword).name === k) return plist[i + 1];
+    }
+    return undefined;
+  };
+  const lispImpl = asList(get("lisp-implementation") ?? [], "lisp-implementation");
+  const machine = asList(get("machine") ?? [], "machine");
+  const features = asList(get("features") ?? [], "features");
+  const pkgInfo = asList(get("package") ?? [], "package");
+  const pid = get("pid");
+
+  const plistGet = (plist: Sexp[], k: string): string => {
+    for (let i = 0; i < plist.length - 1; i += 2) {
+      const key = plist[i];
+      if (key && (key as Keyword).name === k) {
+        const v = plist[i + 1];
+        return typeof v === "string" ? v : print(v ?? []);
+      }
+    }
+    return "";
+  };
+
+  return {
+    pid: typeof pid === "number" ? pid : 0,
+    lispImplementation: {
+      type: plistGet(lispImpl, "type"),
+      name: plistGet(lispImpl, "name"),
+      version: plistGet(lispImpl, "version"),
+    },
+    machine: { instance: plistGet(machine, "instance"), type: plistGet(machine, "type") },
+    features: features.map((f) => f instanceof Sym ? f.name : (f as Keyword)?.name ?? print(f)),
+    packageName: plistGet(pkgInfo, "name"),
+    prompt: plistGet(pkgInfo, "prompt"),
+    version: typeof get("version") === "string" ? get("version") as string : "",
+    raw: info,
+  };
+}
+
+// Silence unused — kept for API ergonomics
+void kw;
+void asNumber;

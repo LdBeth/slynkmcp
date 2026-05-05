@@ -1,0 +1,259 @@
+/**
+ * Minimal s-expression reader/printer for the Slynk wire protocol.
+ *
+ * Supports: symbols (optionally package-qualified), keywords, strings, integers,
+ * floats, ratios (read as string), characters (read as string), lists, dotted
+ * pairs, quote sugar, t / nil. Comments and reader macros beyond `'` are not
+ * supported because Slynk doesn't emit them on the wire.
+ */
+
+export class Sym {
+  constructor(public readonly name: string) {}
+  toString(): string {
+    return this.name;
+  }
+}
+
+export class Keyword {
+  constructor(public readonly name: string) {}
+  toString(): string {
+    return ":" + this.name;
+  }
+}
+
+/** A cons pair whose cdr is not a list — `(a . b)`. Rare but Slynk uses it. */
+export class Cons {
+  constructor(public readonly car: Sexp, public readonly cdr: Sexp) {}
+}
+
+export type Sexp =
+  | number
+  | bigint
+  | string
+  | boolean
+  | null
+  | Sym
+  | Keyword
+  | Cons
+  | Sexp[];
+
+export const NIL: Sexp[] = [];
+export const T = new Sym("t");
+
+export function sym(name: string): Sym {
+  return new Sym(name);
+}
+
+export function kw(name: string): Keyword {
+  return new Keyword(name);
+}
+
+// ---------------------------------------------------------------------------
+// Reader
+// ---------------------------------------------------------------------------
+
+class Reader {
+  pos = 0;
+  constructor(public readonly src: string) {}
+
+  peek(): string {
+    return this.src[this.pos] ?? "";
+  }
+  next(): string {
+    return this.src[this.pos++] ?? "";
+  }
+  eof(): boolean {
+    return this.pos >= this.src.length;
+  }
+
+  skipWs(): void {
+    while (!this.eof()) {
+      const c = this.peek();
+      if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+        this.pos++;
+      } else if (c === ";") {
+        while (!this.eof() && this.next() !== "\n") { /* skip */ }
+      } else {
+        break;
+      }
+    }
+  }
+
+  readSexp(): Sexp {
+    this.skipWs();
+    if (this.eof()) throw new Error("Unexpected EOF");
+    const c = this.peek();
+    if (c === "(") return this.readList();
+    if (c === '"') return this.readString();
+    if (c === "'") {
+      this.pos++;
+      return [sym("quote"), this.readSexp()];
+    }
+    if (c === ")") throw new Error(`Unexpected ')' at ${this.pos}`);
+    return this.readAtom();
+  }
+
+  readList(): Sexp {
+    this.pos++; // consume (
+    const items: Sexp[] = [];
+    let dottedTail: Sexp | undefined;
+    while (true) {
+      this.skipWs();
+      if (this.eof()) throw new Error("Unterminated list");
+      if (this.peek() === ")") {
+        this.pos++;
+        break;
+      }
+      // Detect ` . ` (dotted pair) — must have spaces on both sides per CL.
+      if (
+        this.peek() === "." &&
+        (this.src[this.pos + 1] === " " || this.src[this.pos + 1] === "\t" ||
+          this.src[this.pos + 1] === "\n")
+      ) {
+        this.pos++;
+        this.skipWs();
+        dottedTail = this.readSexp();
+        this.skipWs();
+        if (this.next() !== ")") throw new Error("Expected ')' after dotted tail");
+        break;
+      }
+      items.push(this.readSexp());
+    }
+    if (dottedTail === undefined) return items;
+    if (items.length === 0) return dottedTail; // ( . x ) → x, shouldn't occur
+    return foldDotted(items, dottedTail);
+  }
+
+  readString(): string {
+    this.pos++; // consume "
+    let out = "";
+    while (true) {
+      if (this.eof()) throw new Error("Unterminated string");
+      const c = this.next();
+      if (c === '"') return out;
+      if (c === "\\") {
+        const esc = this.next();
+        // CL string escapes only \" and \\ on the wire; pass others through.
+        out += esc;
+      } else {
+        out += c;
+      }
+    }
+  }
+
+  readAtom(): Sexp {
+    let tok = "";
+    while (!this.eof()) {
+      const c = this.peek();
+      if (
+        c === "(" || c === ")" || c === '"' || c === "'" || c === " " ||
+        c === "\t" || c === "\n" || c === "\r"
+      ) {
+        break;
+      }
+      tok += this.next();
+    }
+    if (tok.length === 0) throw new Error(`Empty atom at ${this.pos}`);
+    return parseAtom(tok);
+  }
+}
+
+function foldDotted(items: Sexp[], tail: Sexp): Sexp {
+  // Build a proper list when possible; fall back to Cons chain for true dots.
+  if (Array.isArray(tail)) return [...items, ...tail];
+  let result: Sexp = new Cons(items[items.length - 1]!, tail);
+  for (let i = items.length - 2; i >= 0; i--) {
+    result = new Cons(items[i]!, result);
+  }
+  return result;
+}
+
+function parseAtom(tok: string): Sexp {
+  if (tok === "nil" || tok === "NIL") return NIL;
+  if (tok === "t" || tok === "T") return T;
+  if (tok[0] === ":") return new Keyword(tok.slice(1).toLowerCase());
+
+  // Integer
+  if (/^-?\d+$/.test(tok)) {
+    const n = Number(tok);
+    if (Number.isSafeInteger(n)) return n;
+    return BigInt(tok);
+  }
+  // Float
+  if (/^-?\d+\.\d*([eE][+-]?\d+)?$/.test(tok) || /^-?\d+[eE][+-]?\d+$/.test(tok)) {
+    return Number(tok);
+  }
+  // Symbols are case-insensitive in CL; Slynk emits lowercase by default.
+  return new Sym(tok.toLowerCase());
+}
+
+export function read(src: string): Sexp {
+  const r = new Reader(src);
+  const v = r.readSexp();
+  r.skipWs();
+  if (!r.eof()) throw new Error(`Trailing data at ${r.pos}: ${r.src.slice(r.pos)}`);
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Printer
+// ---------------------------------------------------------------------------
+
+export function print(s: Sexp): string {
+  if (s === null) return "nil";
+  if (typeof s === "boolean") return s ? "t" : "nil";
+  if (typeof s === "number") return s.toString();
+  if (typeof s === "bigint") return s.toString();
+  if (typeof s === "string") return printString(s);
+  if (s instanceof Sym) return s.name;
+  if (s instanceof Keyword) return ":" + s.name;
+  if (s instanceof Cons) return "(" + print(s.car) + " . " + print(s.cdr) + ")";
+  if (Array.isArray(s)) {
+    if (s.length === 0) return "nil";
+    return "(" + s.map(print).join(" ") + ")";
+  }
+  throw new Error(`Cannot print: ${typeof s}`);
+}
+
+function printString(s: string): string {
+  let out = '"';
+  for (const ch of s) {
+    if (ch === "\\" || ch === '"') out += "\\" + ch;
+    else out += ch;
+  }
+  return out + '"';
+}
+
+// ---------------------------------------------------------------------------
+// Convenience accessors (Slynk responses are deeply nested s-exprs)
+// ---------------------------------------------------------------------------
+
+export function isList(s: Sexp): s is Sexp[] {
+  return Array.isArray(s);
+}
+
+export function isSym(s: Sexp, name?: string): s is Sym {
+  if (!(s instanceof Sym)) return false;
+  return name === undefined || s.name === name.toLowerCase();
+}
+
+export function isKw(s: Sexp, name?: string): s is Keyword {
+  if (!(s instanceof Keyword)) return false;
+  return name === undefined || s.name === name.toLowerCase();
+}
+
+/** Return s if it's a list, else throw with a message including label. */
+export function asList(s: Sexp, label = "value"): Sexp[] {
+  if (!Array.isArray(s)) throw new Error(`Expected list for ${label}, got ${print(s)}`);
+  return s;
+}
+
+export function asString(s: Sexp, label = "value"): string {
+  if (typeof s !== "string") throw new Error(`Expected string for ${label}, got ${print(s)}`);
+  return s;
+}
+
+export function asNumber(s: Sexp, label = "value"): number {
+  if (typeof s !== "number") throw new Error(`Expected number for ${label}, got ${print(s)}`);
+  return s;
+}
