@@ -21,9 +21,9 @@ import {
   print,
   read,
   type Sexp,
-  Sym,
   sym,
   T,
+  tagName,
 } from "./sexp.ts";
 
 export type DebugInfo = {
@@ -63,6 +63,12 @@ export interface RexOptions {
   thread?: "t" | ":repl-thread" | number;
 }
 
+function threadSexp(thread?: "t" | ":repl-thread" | number): Sexp {
+  if (thread === undefined || thread === "t") return T;
+  if (typeof thread === "number") return thread;
+  return new Keyword(thread.replace(/^:/, ""));
+}
+
 export class SlynkClient {
   #conn: Deno.TcpConn | null = null;
   #writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -100,12 +106,7 @@ export class SlynkClient {
     if (!this.#writer) throw new Error("Not connected");
     const id = this.#nextId++;
     const pkg = opts.pkg ?? "COMMON-LISP-USER";
-    const thread: Sexp = opts.thread === undefined || opts.thread === "t"
-      ? T
-      : typeof opts.thread === "number"
-      ? opts.thread
-      : new Keyword(opts.thread.replace(/^:/, ""));
-    const message: Sexp = [kw("emacs-rex"), form, pkg, thread, id];
+    const message: Sexp = [kw("emacs-rex"), form, pkg, threadSexp(opts.thread), id];
     const promise = new Promise<Sexp>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
     });
@@ -115,12 +116,7 @@ export class SlynkClient {
 
   /** Send a raw `:emacs-interrupt` for the given thread (or :repl-thread). */
   interrupt(thread: "t" | ":repl-thread" | number = ":repl-thread"): void {
-    const t: Sexp = thread === "t"
-      ? T
-      : typeof thread === "number"
-      ? thread
-      : new Keyword(thread.replace(/^:/, ""));
-    this.#send(print([kw("emacs-interrupt"), t]));
+    this.#send(print([kw("emacs-interrupt"), threadSexp(thread)]));
   }
 
   /** Send a raw channel message. */
@@ -158,12 +154,11 @@ export class SlynkClient {
       this.events.onUnknown?.(event);
       return;
     }
-    const head = event[0];
-    if (!(head instanceof Keyword) && !(head instanceof Sym)) {
+    const tag = tagName(event[0]);
+    if (!tag) {
       this.events.onUnknown?.(event);
       return;
     }
-    const tag = head instanceof Keyword ? head.name : head.name;
 
     switch (tag) {
       case "return": {

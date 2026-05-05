@@ -11,7 +11,7 @@
  */
 
 import { SlynkClient } from "./slynk/client.ts";
-import { asList, asNumber, type Keyword, kw, print, type Sexp, Sym, sym, T } from "./slynk/sexp.ts";
+import { asList, Keyword, print, type Sexp, str, Sym, sym, T, tagName } from "./slynk/sexp.ts";
 
 export interface SessionOptions {
   host: string;
@@ -58,9 +58,8 @@ export class Session {
       onChannelSend: (_cid, msg) => {
         // mREPL sends (:write-values ...) and (:write-string TEXT) channel msgs
         if (!Array.isArray(msg) || msg.length === 0) return;
-        const head = msg[0];
-        if (!(head instanceof Sym || (head as Keyword)?.name)) return;
-        const tag = head instanceof Sym ? head.name : (head as Keyword).name;
+        const tag = tagName(msg[0]);
+        if (!tag) return;
         if (tag === "write-string" && typeof msg[1] === "string") {
           if (this.#captureBuf) this.#captureBuf.push(msg[1]);
         }
@@ -144,15 +143,6 @@ export class Session {
       value: typeof result === "string" ? result : print(result),
       output,
     };
-  }
-
-  /**
-   * Compatibility shim — earlier we tried `slynk-mrepl:listener-eval` via rex,
-   * but mREPL drives eval through channel messages, not RPC. Stick with
-   * interactive-eval; output capture still works via the :write-string hook.
-   */
-  listenerEval(code: string, pkg?: string): Promise<EvalResult> {
-    return this.eval(code, pkg);
   }
 
   // -------------------------------------------------------------------
@@ -322,46 +312,41 @@ export class Session {
 function parseConnectionInfo(info: Sexp): ConnectionInfo {
   // Slynk returns a property list: (:pid N :lisp-implementation (...) ...)
   const plist = asList(info, "connection-info");
-  const get = (k: string): Sexp | undefined => {
+
+  function plistGet(k: string): Sexp | undefined {
     for (let i = 0; i < plist.length - 1; i += 2) {
       const key = plist[i];
-      if (key && (key as Keyword).name === k) return plist[i + 1];
+      if (key instanceof Keyword && key.name === k) return plist[i + 1];
     }
     return undefined;
-  };
-  const lispImpl = asList(get("lisp-implementation") ?? [], "lisp-implementation");
-  const machine = asList(get("machine") ?? [], "machine");
-  const features = asList(get("features") ?? [], "features");
-  const pkgInfo = asList(get("package") ?? [], "package");
-  const pid = get("pid");
+  }
 
-  const plistGet = (plist: Sexp[], k: string): string => {
-    for (let i = 0; i < plist.length - 1; i += 2) {
-      const key = plist[i];
-      if (key && (key as Keyword).name === k) {
-        const v = plist[i + 1];
-        return typeof v === "string" ? v : print(v ?? []);
-      }
+  function plistStr(subplist: Sexp[], k: string): string {
+    for (let i = 0; i < subplist.length - 1; i += 2) {
+      const key = subplist[i];
+      if (key instanceof Keyword && key.name === k) return str(subplist[i + 1] ?? []);
     }
     return "";
-  };
+  }
+
+  const lispImpl = asList(plistGet("lisp-implementation") ?? [], "lisp-implementation");
+  const machine = asList(plistGet("machine") ?? [], "machine");
+  const features = asList(plistGet("features") ?? [], "features");
+  const pkgInfo = asList(plistGet("package") ?? [], "package");
+  const pid = plistGet("pid");
 
   return {
     pid: typeof pid === "number" ? pid : 0,
     lispImplementation: {
-      type: plistGet(lispImpl, "type"),
-      name: plistGet(lispImpl, "name"),
-      version: plistGet(lispImpl, "version"),
+      type: plistStr(lispImpl, "type"),
+      name: plistStr(lispImpl, "name"),
+      version: plistStr(lispImpl, "version"),
     },
-    machine: { instance: plistGet(machine, "instance"), type: plistGet(machine, "type") },
+    machine: { instance: plistStr(machine, "instance"), type: plistStr(machine, "type") },
     features: features.map((f) => f instanceof Sym ? f.name : (f as Keyword)?.name ?? print(f)),
-    packageName: plistGet(pkgInfo, "name"),
-    prompt: plistGet(pkgInfo, "prompt"),
-    version: typeof get("version") === "string" ? get("version") as string : "",
+    packageName: plistStr(pkgInfo, "name"),
+    prompt: plistStr(pkgInfo, "prompt"),
+    version: str(plistGet("version") ?? [], ""),
     raw: info,
   };
 }
-
-// Silence unused — kept for API ergonomics
-void kw;
-void asNumber;

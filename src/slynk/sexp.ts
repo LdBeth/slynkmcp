@@ -161,11 +161,7 @@ class Reader {
 function foldDotted(items: Sexp[], tail: Sexp): Sexp {
   // Build a proper list when possible; fall back to Cons chain for true dots.
   if (Array.isArray(tail)) return [...items, ...tail];
-  let result: Sexp = new Cons(items[items.length - 1]!, tail);
-  for (let i = items.length - 2; i >= 0; i--) {
-    result = new Cons(items[i]!, result);
-  }
-  return result;
+  return items.reduceRight<Sexp>((acc, item) => new Cons(item, acc), tail);
 }
 
 function parseAtom(tok: string): Sexp {
@@ -256,4 +252,18 @@ export function asString(s: Sexp, label = "value"): string {
 export function asNumber(s: Sexp, label = "value"): number {
   if (typeof s !== "number") throw new Error(`Expected number for ${label}, got ${print(s)}`);
   return s;
+}
+
+/** Coerce a Sexp to a string for display. Uses fallback when the value is nil/undefined. */
+export function str(s: Sexp, fallback = ""): string {
+  if (typeof s === "string") return s;
+  const v = print(s);
+  return v === "nil" ? fallback : v;
+}
+
+/** Return the name if `s` is a Sym or Keyword, otherwise undefined. */
+export function tagName(s: Sexp): string | undefined {
+  if (s instanceof Sym) return s.name;
+  if (s instanceof Keyword) return s.name;
+  return undefined;
 }

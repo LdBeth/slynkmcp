@@ -106,7 +106,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     "eval",
     ({ code, package: pkg }) =>
-      session.listenerEval(code, pkg).then((r) =>
+      session.eval(code, pkg).then((r) =>
         (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value
       ),
   );
