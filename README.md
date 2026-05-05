@@ -97,25 +97,7 @@ them.
 
 ### Project-wide (committed to the repo)
 
-Create `.claude/mcp.json` in the project root:
-
-```json
-{
-  "mcpServers": {
-    "swankmcp": {
-      "command": "deno",
-      "args": [
-        "run",
-        "--allow-net",
-        "--allow-env",
-        "/Users/ldbeth/Public/Projects/swankmcp/main.ts"
-      ]
-    }
-  }
-}
-```
-
-Or register it from the command line (project scope):
+Register it from the command line (project scope):
 
 ```sh
 claude mcp add --scope project swankmcp deno -- run --allow-net --allow-env /Users/ldbeth/Public/Projects/swankmcp/main.ts
@@ -127,7 +109,7 @@ it up automatically.
 ### User-wide (all projects)
 
 ```sh
-claude mcp add --scope user swankmcp deno -- run --allow-net --allow-env /Users/ldbeth/Public/Projects/swankmcp/main.ts
+claude mcp add --scope user swankmcp deno -- run --allow-net --allow-env --env-file /Users/ldbeth/Public/Projects/swankmcp/main.ts
 ```
 
 ### Prerequisites
