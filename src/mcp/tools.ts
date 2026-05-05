@@ -105,10 +105,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
     },
     "eval",
-    async ({ code, package: pkg }) => {
-      const r = await session.listenerEval(code, pkg);
-      return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
-    },
+    ({ code, package: pkg }) =>
+      session.listenerEval(code, pkg).then((r) =>
+        (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value
+      ),
   );
 
   defAsyncTool(
@@ -162,7 +162,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       inputSchema: { prefix: z.string(), package: z.string().optional() },
     },
     "completions",
-    async ({ prefix, package: pkg }) => (await session.completions(prefix, pkg)).join("\n"),
+    ({ prefix, package: pkg }) => (session.completions(prefix, pkg)).then((s) => s.join("\n")),
   );
 
   defAsyncTool(
@@ -423,6 +423,18 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- session info ----
 
+  defTool(server, "set_package", {
+    title: "Set current package",
+    description: "Set the default package used by eval, completions, and all other tools. " +
+      "Equivalent to CL:IN-PACKAGE but handled client-side — no RPC is sent.",
+    inputSchema: {
+      package: z.string().describe('Package name (e.g. "cl-user", "om")'),
+    },
+  }, ({ package: pkg }) => {
+    session.defaultPackage = pkg;
+    return txt(`default package set to ${pkg}`);
+  });
+
   defTool(server, "connection_info", {
     title: "Slynk connection info",
     description: "Return host Lisp implementation, version, features, and current package.",
@@ -434,7 +446,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       `pid: ${ci.pid}\n` +
         `lisp: ${ci.lispImplementation.name} ${ci.lispImplementation.version} (${ci.lispImplementation.type})\n` +
         `machine: ${ci.machine.instance} (${ci.machine.type})\n` +
-        `package: ${ci.packageName} (prompt: ${ci.prompt})\n` +
+        `package: ${session.defaultPackage} (initial: ${ci.packageName}, prompt: ${ci.prompt})\n` +
         `slynk version: ${ci.version}\n` +
         `features (${ci.features.length}): ${ci.features.slice(0, 30).join(" ")}${
           ci.features.length > 30 ? " …" : ""

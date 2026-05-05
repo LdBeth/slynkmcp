@@ -89,9 +89,10 @@ them.
 
 ### Session
 
-| Tool              | Description                                                           |
-| ----------------- | --------------------------------------------------------------------- |
-| `connection_info` | Lisp implementation name/version, machine, features, current package. |
+| Tool              | Description                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `set_package`     | Set the default package for eval, completions, and all other tools (client-side, no RPC). |
+| `connection_info` | Lisp implementation name/version, machine, features, current + initial package.           |
 
 ## Enabling in Claude Code
 
