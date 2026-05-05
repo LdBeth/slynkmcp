@@ -5,5 +5,8 @@
 .env
 .env.*
 
+# Artifacts
+*.mjs
+
 # Claude Code worktrees
 .claude/
