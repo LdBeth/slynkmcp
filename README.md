@@ -21,7 +21,7 @@ Environment variables:
 | ------------------ | ----------- | ---------------------------------------- |
 | `SLYNK_HOST`       | `127.0.0.1` | Slynk listener host                      |
 | `SLYNK_PORT`       | `4005`      | Slynk listener port                      |
-| `OM_PACKAGE`       | `om`        | Default Common Lisp package for `eval`   |
+| `CL_PACKAGE`       | `cl-user`   | Default Common Lisp package for `eval`   |
 | `MAX_RESULT_CHARS` | `8000`      | Truncate larger results, return a handle |
 | `LOG_LEVEL`        | `INFO`      | Deno std log level                       |
 

@@ -23,7 +23,7 @@ export function loadConfig(): Config {
   return {
     host: envStr("SLYNK_HOST", "localhost"),
     port: envInt("SLYNK_PORT", 4005),
-    defaultPackage: envStr("OM_PACKAGE", "om"),
+    defaultPackage: envStr("CL_PACKAGE", "cl-user"),
     maxResultChars: envInt("MAX_RESULT_CHARS", 8000),
   };
 }
