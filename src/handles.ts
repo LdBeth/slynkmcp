@@ -23,9 +23,7 @@ export class HandleStore {
     this.#map.set(id, h);
     while (this.#map.size > this.capacity) {
       // Map iteration is insertion-ordered; drop oldest.
-      const oldest = this.#map.keys().next().value;
-      if (oldest === undefined) break;
-      this.#map.delete(oldest);
+      this.#map.delete(this.#map.keys().next().value!);
     }
     return h;
   }

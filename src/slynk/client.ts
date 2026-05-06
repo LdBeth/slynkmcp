@@ -110,7 +110,12 @@ export class SlynkClient {
     const promise = new Promise<Sexp>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
     });
-    this.#send(print(message));
+    try {
+      this.#send(print(message));
+    } catch (e) {
+      this.#pending.delete(id);
+      throw e;
+    }
     return promise;
   }
 
@@ -163,8 +168,9 @@ export class SlynkClient {
     switch (tag) {
       case "return": {
         // (:return (:ok VALUE) ID)  or  (:return (:abort REASON) ID)
-        const result = asList(event[1]!, ":return result");
-        const id = asNumber(event[2]!, ":return id");
+        const result = Array.isArray(event[1]) ? event[1] : null;
+        const id = typeof event[2] === "number" ? event[2] : null;
+        if (!result || id === null) return;
         const p = this.#pending.get(id);
         if (!p) return;
         this.#pending.delete(id);
