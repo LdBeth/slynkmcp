@@ -21,8 +21,9 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     "lisp_eval",
     {
       title: "Evaluate Lisp",
-      description:
-        "Evaluate a Common Lisp expression in the running image. Returns the printed value plus any captured stdout. Defaults to the configured Opusmodus package.",
+      description: "Evaluate a Common Lisp expression in the running image. " +
+        "Returns the printed value plus any captured stdout. " +
+        "Defaults to the configured Opusmodus package.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: z.string().optional().describe("Override the default package for this call"),
@@ -42,8 +43,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     "lisp_compile_file",
     {
       title: "Compile a Lisp file",
-      description:
-        "Compile a file via slynk:compile-file-for-emacs. Optionally load the resulting fasl.",
+      description: "Compile a file. Optionally load the resulting fasl.",
       inputSchema: {
         path: z.string().describe("Absolute path to the .lisp file"),
         load: z.boolean().optional().default(true).describe(
@@ -176,7 +176,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       title: "Macro-expand a form",
       description: "Macroexpand-1 by default, or fully expand all macros.",
       inputSchema: {
-        form: z.string().describe("Source form to expand (as a string)"),
+        form: z.string().describe("Source form string to expand"),
         all: z.boolean().optional().default(false).describe(
           "If true, fully expand all macros (macroexpand-all); otherwise macroexpand-1",
         ),
@@ -207,8 +207,8 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   defTool(server, "lisp_debug_status", {
     title: "Current debugger state",
-    description:
-      "Report the active debugger condition, restart list, and top stack frames. Returns 'not in debugger' if no debug level is active.",
+    description: "Report the active debugger condition, restart list, and top stack frames. " +
+      "Returns 'not in debugger' if no debug level is active.",
     inputSchema: {},
     annotations: READ_ONLY,
   }, () => {
@@ -309,7 +309,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defTool(server, "lisp_get_handle", {
     title: "Fetch a stored handle",
     description:
-      "Retrieve a slice of a previously-stored large result by handle id (returned in '…[truncated … in handle hX]' messages).",
+      "Retrieve previously-stored large result by handle id (returned in '…[truncated … in handle hX]' messages).",
     inputSchema: {
       id: z.string().describe("Handle id (e.g. 'h3') from a prior truncation message"),
       offset: z.number().int().nonnegative().optional().default(0).describe(

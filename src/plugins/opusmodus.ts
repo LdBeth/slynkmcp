@@ -22,12 +22,12 @@ export const opusmodusPlugin: Plugin = {
       {
         title: "Audition OMN snippet",
         description: "Audition and display an OMN snippet via Opusmodus. The snippet is " +
-          "passed verbatim as a quoted form to (om:audition-musicxml-omn-snippet ...). " +
+          "passed verbatim as a quoted form. " +
           "Example snippet: ((repeat (q c4 e4 g4 c4e4g4) (q a4 g4 g4 c4e4g4))). " +
           "Audible side effects (MIDI playback) and opens MusicXML notation.",
         inputSchema: {
           snippet: z.string().describe(
-            "An OMN s-expression as text (will be inserted as the quoted argument)",
+            "An OMN s-expression as text (will be quoted)",
           ),
         },
         annotations: {
@@ -46,8 +46,8 @@ export const opusmodusPlugin: Plugin = {
 
     defTool(server, "om_stop", {
       title: "Stop Opusmodus audition",
-      description: "Stop any currently playing Opusmodus audition by calling (om:stop-midi) and " +
-        "(om:stop-sound). Idempotent — safe to call when nothing is playing.",
+      description: "Stop any currently playing Opusmodus audition. " +
+        "Idempotent — safe to call when nothing is playing.",
       inputSchema: {},
       annotations: {
         readOnlyHint: false,
