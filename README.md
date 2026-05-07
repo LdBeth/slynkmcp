@@ -96,6 +96,36 @@ them.
 | `lisp_set_package`     | Set the default package for eval, completions, and all other tools (client-side, no RPC). |
 | `lisp_connection_info` | Lisp implementation name/version, machine, features, current + initial package.           |
 
+## Plugins
+
+swankmcp ships an in-tree plugin seam for environment-specific tools that shouldn't live in the
+generic Slynk bridge. Plugins are off by default and activated explicitly per run.
+
+**Activation** — repeatable CLI flag, or comma-separated env var:
+
+```bash
+deno run -A main.ts --plugin=opusmodus
+# or
+SWANKMCP_PLUGINS=opusmodus deno run -A main.ts
+```
+
+An unknown plugin name aborts startup before the Slynk socket is opened.
+
+### Opusmodus
+
+Adds two tools that mirror helpers from the Emacs/SLIME glue Opusmodus ships:
+
+- `om_audition_snippet { snippet }` — wraps `(om:audition-musicxml-omn-snippet '<snippet>)`.
+- `om_stop` — wraps `(progn (om:stop-midi) (om:stop-sound))`.
+
+**Manual smoke test** (requires a running Opusmodus image with Slynk on `:4005`):
+
+1. In Opusmodus: `(slynk:create-server :port 4005 :dont-close t)`.
+2. Start swankmcp from a client that speaks MCP: `deno run -A main.ts --plugin=opusmodus`.
+3. Call `om_audition_snippet` with `snippet = "((repeat (q c4 e4 g4 c4e4g4) (q a4 g4 g4 c4e4g4)))"`.
+   MIDI should play and a MusicXML window should appear.
+4. Call `om_stop`. Playback should halt.
+
 ## Enabling in Claude Code
 
 ### Project-wide (committed to the repo)
