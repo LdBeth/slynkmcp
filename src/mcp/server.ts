@@ -33,8 +33,6 @@ export async function runServer(config: Config): Promise<void> {
         `Core: 'lisp_eval' runs Lisp code and returns value + captured stdout. ` +
         `Introspection: 'lisp_completions', 'lisp_apropos', 'lisp_describe_symbol', ` +
         `'lisp_documentation', 'lisp_arglist', 'lisp_macroexpand', 'lisp_find_definition'. ` +
-        `Inspector: 'lisp_inspect' an object, 'lisp_inspect_part', 'lisp_inspector_pop', ` +
-        `'lisp_inspector_reinspect'. ` +
         `Code loading: 'lisp_compile_file' (compile-for-emacs), 'lisp_load_file' (LOAD). ` +
         `Debugger: when eval errors, the condition + restarts are surfaced automatically; ` +
         `use 'lisp_debug_status', 'lisp_debug_invoke_restart', 'lisp_debug_abort', ` +

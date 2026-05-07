@@ -1,5 +1,6 @@
 import type { Plugin } from "./types.ts";
 import { opusmodusPlugin } from "./opusmodus.ts";
+import { inspectorPlugin } from "./inspector.ts";
 
 /**
  * Hard-coded registry of in-tree plugins. Keys are the names users pass to
@@ -7,6 +8,7 @@ import { opusmodusPlugin } from "./opusmodus.ts";
  */
 export const PLUGINS: Record<string, Plugin> = {
   opusmodus: opusmodusPlugin,
+  inspector: inspectorPlugin,
 };
 
 /**

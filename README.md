@@ -59,15 +59,6 @@ All tools are prefixed `lisp_` to avoid name collisions with other MCP servers.
 | `lisp_macroexpand`     | `macroexpand-1` a form (or full expansion with `all: true`).                          |
 | `lisp_find_definition` | Source locations for a symbol's definitions.                                          |
 
-### Inspector
-
-| Tool                       | Description                                                          |
-| -------------------------- | -------------------------------------------------------------------- |
-| `lisp_inspect`             | Open the Slynk inspector on an expression. Returns structured parts. |
-| `lisp_inspect_part`        | Drill into part N of the current inspector view.                     |
-| `lisp_inspector_pop`       | Return to the previous inspector level.                              |
-| `lisp_inspector_reinspect` | Re-inspect the current object.                                       |
-
 ### Debugger
 
 | Tool                        | Description                                                                                |
@@ -110,6 +101,20 @@ SWANKMCP_PLUGINS=opusmodus deno run -A main.ts
 ```
 
 An unknown plugin name aborts startup before the Slynk socket is opened.
+
+### Inspector
+
+Exposes the Slynk inspector. The inspector is stateful (a stack of inspected objects on the Lisp
+side), so it's gated behind explicit activation.
+
+| Tool                       | Description                                                          |
+| -------------------------- | -------------------------------------------------------------------- |
+| `lisp_inspect`             | Open the Slynk inspector on an expression. Returns structured parts. |
+| `lisp_inspect_part`        | Drill into part N of the current inspector view.                     |
+| `lisp_inspector_pop`       | Return to the previous inspector level.                              |
+| `lisp_inspector_reinspect` | Re-inspect the current object.                                       |
+
+Activate with `--plugin=inspector`.
 
 ### Opusmodus
 
