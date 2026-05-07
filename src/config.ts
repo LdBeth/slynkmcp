@@ -3,6 +3,7 @@ export interface Config {
   port: number;
   defaultPackage: string;
   maxResultChars: number;
+  plugins: string[];
 }
 
 function envStr(name: string, fallback: string): string {
@@ -19,11 +20,18 @@ function envInt(name: string, fallback: number): number {
   return n;
 }
 
+function envList(name: string): string[] {
+  const raw = Deno.env.get(name);
+  if (!raw) return [];
+  return raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+}
+
 export function loadConfig(): Config {
   return {
     host: envStr("SLYNK_HOST", "localhost"),
     port: envInt("SLYNK_PORT", 4005),
     defaultPackage: envStr("CL_PACKAGE", "cl-user"),
     maxResultChars: envInt("MAX_RESULT_CHARS", 8000),
+    plugins: envList("SWANKMCP_PLUGINS"),
   };
 }

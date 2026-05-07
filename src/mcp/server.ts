@@ -4,8 +4,13 @@ import { Session } from "../session.ts";
 import { HandleStore } from "../handles.ts";
 import { registerTools } from "./tools.ts";
 import type { Config } from "../config.ts";
+import { loadPlugins } from "../plugins/registry.ts";
 
 export async function runServer(config: Config): Promise<void> {
+  // Resolve plugin names up front so an unknown name aborts before we open the
+  // Slynk socket.
+  const plugins = loadPlugins(config.plugins);
+
   const session = new Session({
     host: config.host,
     port: config.port,
@@ -14,13 +19,17 @@ export async function runServer(config: Config): Promise<void> {
 
   await session.start(config.host, config.port);
 
+  const pluginNote = plugins.length > 0
+    ? ` Plugins active: ${plugins.map((p) => p.name).join(", ")}.`
+    : "";
+
   const server = new McpServer(
     { name: "slynk-mcp-server", version: "0.1.0" },
     {
       capabilities: { tools: {} },
       instructions: `Bridge to a running Common Lisp image (Opusmodus) over Slynk on ` +
         `${config.host}:${config.port}. Default package: ${config.defaultPackage}. ` +
-        `All tools are prefixed 'lisp_'. ` +
+        `All core tools are prefixed 'lisp_'. ` +
         `Core: 'lisp_eval' runs Lisp code and returns value + captured stdout. ` +
         `Introspection: 'lisp_completions', 'lisp_apropos', 'lisp_describe_symbol', ` +
         `'lisp_documentation', 'lisp_arglist', 'lisp_macroexpand', 'lisp_find_definition'. ` +
@@ -33,12 +42,17 @@ export async function runServer(config: Config): Promise<void> {
         `to inspect and recover. ` +
         `Large results are truncated and stashed in handles; use 'lisp_get_handle' / ` +
         `'lisp_list_handles' to retrieve slices. 'lisp_interrupt' cancels a runaway computation. ` +
-        `'lisp_connection_info' shows Lisp implementation, version, features, and package.`,
+        `'lisp_connection_info' shows Lisp implementation, version, features, and package.` +
+        pluginNote,
     },
   );
 
   const store = new HandleStore();
-  registerTools(server, { session, store, maxResultChars: config.maxResultChars });
+  const ctx = { session, store, maxResultChars: config.maxResultChars };
+  registerTools(server, ctx);
+  for (const plugin of plugins) {
+    plugin.register(server, ctx);
+  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
