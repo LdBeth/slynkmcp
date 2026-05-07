@@ -5,124 +5,19 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Session } from "../session.ts";
-import { HandleStore, maybeTruncate } from "../handles.ts";
 import { print } from "../slynk/sexp.ts";
+import {
+  type Ctx,
+  defAsyncTool,
+  defTool,
+  err,
+  MUTATING,
+  READ_ONLY,
+  STATEFUL_READ,
+  txt,
+} from "./tool_helpers.ts";
 
-interface Ctx {
-  session: Session;
-  store: HandleStore;
-  maxResultChars: number;
-}
-
-type TextContent = { type: "text"; text: string };
-type ToolResult = { content: TextContent[]; isError?: boolean };
-
-interface ToolAnnotations {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-}
-
-// Standard annotation presets. Every tool here touches the running Lisp image,
-// so openWorldHint is true throughout.
-const READ_ONLY: ToolAnnotations = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: true,
-};
-const MUTATING: ToolAnnotations = {
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: true,
-};
-// Inspector navigation: not destructive, but the inspector has internal state
-// so the same call doesn't always return the same thing.
-const STATEFUL_READ: ToolAnnotations = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  idempotentHint: false,
-  openWorldHint: true,
-};
-
-function txt(text: string): ToolResult {
-  return { content: [{ type: "text", text }] };
-}
-
-function err(text: string): ToolResult {
-  return { content: [{ type: "text", text }], isError: true };
-}
-
-/**
- * Wrapper around `server.registerTool` that infers handler args from the Zod
- * shape — the SDK's own callback inference doesn't work with Zod 4 in Deno
- * (TS7031), so we do it here once.
- */
-function defTool<S extends z.ZodRawShape>(
-  server: McpServer,
-  name: string,
-  config: {
-    title?: string;
-    description: string;
-    inputSchema: S;
-    annotations?: ToolAnnotations;
-  },
-  handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
-): void {
-  server.registerTool(name, config, handler);
-}
-
-function format(store: HandleStore, kind: string, text: string, maxChars: number): string {
-  return maybeTruncate(store, kind, text, maxChars).text;
-}
-
-function debugSummary(session: Session): string {
-  const d = session.currentDebug();
-  if (!d) return "";
-  const restarts = d.restarts.map((r, i) => `  ${i}. ${r.name} — ${r.description}`).join("\n");
-  const frames = d.frames.slice(0, 8).map((f) => `  #${f.index} ${f.description}`).join("\n");
-  return `\n\n[DEBUGGER ACTIVE — level ${d.level}]\n` +
-    `condition: ${d.condition.type}: ${d.condition.message}\n` +
-    `restarts:\n${restarts}\n` +
-    `top frames:\n${frames}`;
-}
-
-/**
- * Register an async tool whose handler follows the standard pattern:
- *
- *   try { op(args) → format → +debugSummary → txt }
- *   catch (e) { (e.message + debugSummary) → err }
- *
- * By the Either monad this is
- *   mapRight (txt . appendDbg) . mapLeft (err . appendDbg) (toEither (op(args)))
- *
- * Parameterised as a factory to eliminate the repeated try/catch stanzas
- */
-function defAsyncTool<S extends z.ZodRawShape>(
-  server: McpServer,
-  ctx: Ctx,
-  name: string,
-  config: {
-    title?: string;
-    description: string;
-    inputSchema: S;
-    annotations?: ToolAnnotations;
-  },
-  kind: string,
-  op: (args: z.infer<z.ZodObject<S>>) => Promise<string>,
-): void {
-  defTool(server, name, config, async (args) => {
-    try {
-      const text = await op(args);
-      return txt(format(ctx.store, kind, text, ctx.maxResultChars) + debugSummary(ctx.session));
-    } catch (e) {
-      return err((e as Error).message + debugSummary(ctx.session));
-    }
-  });
-}
+export type { Ctx };
 
 export function registerTools(server: McpServer, ctx: Ctx): void {
   const { session } = ctx;
