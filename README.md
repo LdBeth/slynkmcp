@@ -11,7 +11,7 @@ Claude Code  ──stdio MCP──▶  swankmcp (Deno)  ──TCP──▶  Slyn
 A single long-lived TCP connection to Slynk multiplexes all MCP tool calls. A dedicated mREPL
 channel is created at startup so per-request stdout is captured cleanly. Errors that drop into the
 Slynk debugger are surfaced as MCP tool errors carrying the condition + restart list, and a set of
-`debug_*` tools let the model query frames, eval in frames, and invoke restarts (or abort).
+`lisp_debug_*` tools let the model query frames, eval in frames, and invoke restarts (or abort).
 
 ## Configuration
 
@@ -36,63 +36,65 @@ you prefer.)
 
 ## MCP Tools
 
+All tools are prefixed `lisp_` to avoid name collisions with other MCP servers.
+
 ### Core eval
 
-| Tool           | Description                                                                                                     |
-| -------------- | --------------------------------------------------------------------------------------------------------------- |
-| `eval`         | Evaluate a Common Lisp expression. Returns the printed value plus captured stdout. Optional `package` override. |
-| `compile_file` | Compile a `.lisp` file (`compile-file-for-emacs`). Optional `load` flag (default true).                         |
-| `load_file`    | `LOAD` a file in the running image.                                                                             |
-| `interrupt`    | Send `:emacs-interrupt` to the REPL thread.                                                                     |
+| Tool                | Description                                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `lisp_eval`         | Evaluate a Common Lisp expression. Returns the printed value plus captured stdout. Optional `package` override. |
+| `lisp_compile_file` | Compile a `.lisp` file (`compile-file-for-emacs`). Optional `load` flag (default true).                         |
+| `lisp_load_file`    | `LOAD` a file in the running image.                                                                             |
+| `lisp_interrupt`    | Send `:emacs-interrupt` to the REPL thread.                                                                     |
 
 ### Introspection
 
-| Tool              | Description                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `completions`     | Symbol completions for a prefix (flex-style). Optional `package`.                     |
-| `apropos`         | Search for symbols matching a substring. Optional `externalOnly` flag (default true). |
-| `describe_symbol` | Full `describe` output for a symbol.                                                  |
-| `documentation`   | Docstring for a symbol.                                                               |
-| `arglist`         | Argument list for a function or macro.                                                |
-| `macroexpand`     | `macroexpand-1` a form (or full expansion with `all: true`).                          |
-| `find_definition` | Source locations for a symbol's definitions.                                          |
+| Tool                   | Description                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `lisp_completions`     | Symbol completions for a prefix (flex-style). Optional `package`.                     |
+| `lisp_apropos`         | Search for symbols matching a substring. Optional `externalOnly` flag (default true). |
+| `lisp_describe_symbol` | Full `describe` output for a symbol.                                                  |
+| `lisp_documentation`   | Docstring for a symbol.                                                               |
+| `lisp_arglist`         | Argument list for a function or macro.                                                |
+| `lisp_macroexpand`     | `macroexpand-1` a form (or full expansion with `all: true`).                          |
+| `lisp_find_definition` | Source locations for a symbol's definitions.                                          |
 
 ### Inspector
 
-| Tool                  | Description                                                          |
-| --------------------- | -------------------------------------------------------------------- |
-| `inspect`             | Open the Slynk inspector on an expression. Returns structured parts. |
-| `inspect_part`        | Drill into part N of the current inspector view.                     |
-| `inspector_pop`       | Return to the previous inspector level.                              |
-| `inspector_reinspect` | Re-inspect the current object.                                       |
+| Tool                       | Description                                                          |
+| -------------------------- | -------------------------------------------------------------------- |
+| `lisp_inspect`             | Open the Slynk inspector on an expression. Returns structured parts. |
+| `lisp_inspect_part`        | Drill into part N of the current inspector view.                     |
+| `lisp_inspector_pop`       | Return to the previous inspector level.                              |
+| `lisp_inspector_reinspect` | Re-inspect the current object.                                       |
 
 ### Debugger
 
-| Tool                   | Description                                                                                |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| `debug_status`         | Report the active condition, restarts, and top frames. Returns "not in debugger" if clean. |
-| `debug_invoke_restart` | Invoke restart N from the list shown by `debug_status`.                                    |
-| `debug_abort`          | Throw to top-level, exiting all debugger levels.                                           |
-| `debug_frame_locals`   | Local variables (and catch tags) for a given stack frame.                                  |
-| `debug_frame_source`   | Source location for a given stack frame.                                                   |
-| `debug_eval_in_frame`  | Evaluate an expression in the lexical environment of a stack frame.                        |
+| Tool                        | Description                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------ |
+| `lisp_debug_status`         | Report the active condition, restarts, and top frames. Returns "not in debugger" if clean. |
+| `lisp_debug_invoke_restart` | Invoke restart N from the list shown by `lisp_debug_status`.                               |
+| `lisp_debug_abort`          | Throw to top-level, exiting all debugger levels.                                           |
+| `lisp_debug_frame_locals`   | Local variables (and catch tags) for a given stack frame.                                  |
+| `lisp_debug_frame_source`   | Source location for a given stack frame.                                                   |
+| `lisp_debug_eval_in_frame`  | Evaluate an expression in the lexical environment of a stack frame.                        |
 
 ### Handles
 
 Large results are automatically truncated and stored under a handle id. Use these tools to retrieve
 them.
 
-| Tool           | Description                                                                          |
-| -------------- | ------------------------------------------------------------------------------------ |
-| `get_handle`   | Fetch a slice of a stored large result by handle id. Supports `offset` and `length`. |
-| `list_handles` | List ids and metadata for all stored handles (up to 64, LRU).                        |
+| Tool                | Description                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `lisp_get_handle`   | Fetch a slice of a stored large result by handle id. Supports `offset` and `length`. |
+| `lisp_list_handles` | List ids and metadata for all stored handles (up to 64, LRU).                        |
 
 ### Session
 
-| Tool              | Description                                                                               |
-| ----------------- | ----------------------------------------------------------------------------------------- |
-| `set_package`     | Set the default package for eval, completions, and all other tools (client-side, no RPC). |
-| `connection_info` | Lisp implementation name/version, machine, features, current + initial package.           |
+| Tool                   | Description                                                                               |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| `lisp_set_package`     | Set the default package for eval, completions, and all other tools (client-side, no RPC). |
+| `lisp_connection_info` | Lisp implementation name/version, machine, features, current + initial package.           |
 
 ## Enabling in Claude Code
 

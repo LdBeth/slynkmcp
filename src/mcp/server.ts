@@ -15,22 +15,25 @@ export async function runServer(config: Config): Promise<void> {
   await session.start(config.host, config.port);
 
   const server = new McpServer(
-    { name: "swankmcp", version: "0.1.0" },
+    { name: "slynk-mcp-server", version: "0.1.0" },
     {
       capabilities: { tools: {} },
       instructions: `Bridge to a running Common Lisp image (Opusmodus) over Slynk on ` +
         `${config.host}:${config.port}. Default package: ${config.defaultPackage}. ` +
-        `Core: 'eval' runs Lisp code and returns value + captured stdout. ` +
-        `Introspection: 'completions', 'apropos', 'describe_symbol', 'documentation', ` +
-        `'arglist', 'macroexpand', 'find_definition'. ` +
-        `Inspector: 'inspect' an object, 'inspect_part', 'inspector_pop', 'inspector_reinspect'. ` +
-        `Code loading: 'compile_file' (compile-for-emacs), 'load_file' (LOAD). ` +
+        `All tools are prefixed 'lisp_'. ` +
+        `Core: 'lisp_eval' runs Lisp code and returns value + captured stdout. ` +
+        `Introspection: 'lisp_completions', 'lisp_apropos', 'lisp_describe_symbol', ` +
+        `'lisp_documentation', 'lisp_arglist', 'lisp_macroexpand', 'lisp_find_definition'. ` +
+        `Inspector: 'lisp_inspect' an object, 'lisp_inspect_part', 'lisp_inspector_pop', ` +
+        `'lisp_inspector_reinspect'. ` +
+        `Code loading: 'lisp_compile_file' (compile-for-emacs), 'lisp_load_file' (LOAD). ` +
         `Debugger: when eval errors, the condition + restarts are surfaced automatically; ` +
-        `use 'debug_status', 'debug_invoke_restart', 'debug_abort', 'debug_frame_locals', ` +
-        `'debug_frame_source', 'debug_eval_in_frame' to inspect and recover. ` +
-        `Large results are truncated and stashed in handles; use 'get_handle' / 'list_handles' ` +
-        `to retrieve slices. 'interrupt' cancels a runaway computation. ` +
-        `'connection_info' shows Lisp implementation, version, features, and package.`,
+        `use 'lisp_debug_status', 'lisp_debug_invoke_restart', 'lisp_debug_abort', ` +
+        `'lisp_debug_frame_locals', 'lisp_debug_frame_source', 'lisp_debug_eval_in_frame' ` +
+        `to inspect and recover. ` +
+        `Large results are truncated and stashed in handles; use 'lisp_get_handle' / ` +
+        `'lisp_list_handles' to retrieve slices. 'lisp_interrupt' cancels a runaway computation. ` +
+        `'lisp_connection_info' shows Lisp implementation, version, features, and package.`,
     },
   );
 

@@ -18,6 +18,36 @@ interface Ctx {
 type TextContent = { type: "text"; text: string };
 type ToolResult = { content: TextContent[]; isError?: boolean };
 
+interface ToolAnnotations {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
+// Standard annotation presets. Every tool here touches the running Lisp image,
+// so openWorldHint is true throughout.
+const READ_ONLY: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+const MUTATING: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+// Inspector navigation: not destructive, but the inspector has internal state
+// so the same call doesn't always return the same thing.
+const STATEFUL_READ: ToolAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
 function txt(text: string): ToolResult {
   return { content: [{ type: "text", text }] };
 }
@@ -34,11 +64,15 @@ function err(text: string): ToolResult {
 function defTool<S extends z.ZodRawShape>(
   server: McpServer,
   name: string,
-  config: { title?: string; description: string; inputSchema: S },
+  config: {
+    title?: string;
+    description: string;
+    inputSchema: S;
+    annotations?: ToolAnnotations;
+  },
   handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
 ): void {
-  // deno-lint-ignore no-explicit-any
-  server.registerTool(name, config as any, handler as any);
+  server.registerTool(name, config, handler);
 }
 
 function format(store: HandleStore, kind: string, text: string, maxChars: number): string {
@@ -66,13 +100,17 @@ function debugSummary(session: Session): string {
  *   mapRight (txt . appendDbg) . mapLeft (err . appendDbg) (toEither (op(args)))
  *
  * Parameterised as a factory to eliminate the repeated try/catch stanzas
- * (used 19 times — every async tool except the five sync special cases).
  */
 function defAsyncTool<S extends z.ZodRawShape>(
   server: McpServer,
   ctx: Ctx,
   name: string,
-  config: { title?: string; description: string; inputSchema: S },
+  config: {
+    title?: string;
+    description: string;
+    inputSchema: S;
+    annotations?: ToolAnnotations;
+  },
   kind: string,
   op: (args: z.infer<z.ZodObject<S>>) => Promise<string>,
 ): void {
@@ -94,15 +132,16 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "eval",
+    "lisp_eval",
     {
       title: "Evaluate Lisp",
       description:
         "Evaluate a Common Lisp expression in the running image. Returns the printed value plus any captured stdout. Defaults to the configured Opusmodus package.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
-        package: z.string().optional().describe("Override the default package"),
+        package: z.string().optional().describe("Override the default package for this call"),
       },
+      annotations: MUTATING,
     },
     "eval",
     ({ code, package: pkg }) =>
@@ -114,15 +153,18 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "compile_file",
+    "lisp_compile_file",
     {
       title: "Compile a Lisp file",
       description:
         "Compile a file via slynk:compile-file-for-emacs. Optionally load the resulting fasl.",
       inputSchema: {
         path: z.string().describe("Absolute path to the .lisp file"),
-        load: z.boolean().optional().default(true),
+        load: z.boolean().optional().default(true).describe(
+          "Load the resulting fasl after a successful compile (default true)",
+        ),
       },
+      annotations: MUTATING,
     },
     "compile",
     ({ path, load }) => session.compileFile(path, load).then(print),
@@ -131,20 +173,24 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "load_file",
+    "lisp_load_file",
     {
       title: "Load a Lisp file",
       description: "LOAD a file in the running image.",
-      inputSchema: { path: z.string() },
+      inputSchema: {
+        path: z.string().describe("Absolute path to the file to LOAD"),
+      },
+      annotations: MUTATING,
     },
     "load",
     ({ path }) => session.loadFile(path).then(print),
   );
 
-  defTool(server, "interrupt", {
+  defTool(server, "lisp_interrupt", {
     title: "Interrupt running computation",
     description: "Send :emacs-interrupt to the REPL thread.",
     inputSchema: {},
+    annotations: MUTATING,
   }, () => {
     session.interrupt();
     return txt("interrupt sent");
@@ -155,11 +201,15 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "completions",
+    "lisp_completions",
     {
       title: "Symbol completions",
       description: "Flex-style symbol completions for a prefix.",
-      inputSchema: { prefix: z.string(), package: z.string().optional() },
+      inputSchema: {
+        prefix: z.string().describe("Symbol prefix to complete"),
+        package: z.string().optional().describe("Package context for completion"),
+      },
+      annotations: READ_ONLY,
     },
     "completions",
     ({ prefix, package: pkg }) => (session.completions(prefix, pkg)).then((s) => s.join("\n")),
@@ -168,14 +218,17 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "apropos",
+    "lisp_apropos",
     {
       title: "Apropos search",
       description: "Search for symbols matching a substring.",
       inputSchema: {
-        pattern: z.string(),
-        externalOnly: z.boolean().optional().default(true),
+        pattern: z.string().describe("Substring or pattern to match against symbol names"),
+        externalOnly: z.boolean().optional().default(true).describe(
+          "Restrict to external (exported) symbols only (default true)",
+        ),
       },
+      annotations: READ_ONLY,
     },
     "apropos",
     ({ pattern, externalOnly }) => session.apropos(pattern, externalOnly),
@@ -184,11 +237,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "describe_symbol",
+    "lisp_describe_symbol",
     {
       title: "Describe a symbol",
       description: "Full describe output for a symbol (function/variable/class).",
-      inputSchema: { symbol: z.string() },
+      inputSchema: {
+        symbol: z.string().describe("Symbol name to describe (e.g. 'mapcar', 'cl:list')"),
+      },
+      annotations: READ_ONLY,
     },
     "describe",
     ({ symbol }) => session.describe(symbol),
@@ -197,11 +253,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "documentation",
+    "lisp_documentation",
     {
       title: "Symbol docstring",
       description: "DOCUMENTATION string for a symbol.",
-      inputSchema: { symbol: z.string() },
+      inputSchema: {
+        symbol: z.string().describe("Symbol name to fetch the docstring for"),
+      },
+      annotations: READ_ONLY,
     },
     "doc",
     ({ symbol }) => session.documentation(symbol),
@@ -210,11 +269,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "arglist",
+    "lisp_arglist",
     {
       title: "Operator arglist",
       description: "Argument list for a function/macro.",
-      inputSchema: { symbol: z.string() },
+      inputSchema: {
+        symbol: z.string().describe("Function or macro name"),
+      },
+      annotations: READ_ONLY,
     },
     "arglist",
     ({ symbol }) => session.arglist(symbol),
@@ -223,14 +285,17 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "macroexpand",
+    "lisp_macroexpand",
     {
       title: "Macro-expand a form",
       description: "Macroexpand-1 by default, or fully expand all macros.",
       inputSchema: {
-        form: z.string(),
-        all: z.boolean().optional().default(false),
+        form: z.string().describe("Source form to expand (as a string)"),
+        all: z.boolean().optional().default(false).describe(
+          "If true, fully expand all macros (macroexpand-all); otherwise macroexpand-1",
+        ),
       },
+      annotations: READ_ONLY,
     },
     "macroexpand",
     ({ form, all }) => session.macroexpand(form, all),
@@ -239,11 +304,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "find_definition",
+    "lisp_find_definition",
     {
       title: "Find symbol definition",
       description: "Source locations for a symbol's definitions.",
-      inputSchema: { symbol: z.string() },
+      inputSchema: {
+        symbol: z.string().describe("Symbol name whose definitions to locate"),
+      },
+      annotations: READ_ONLY,
     },
     "find-def",
     ({ symbol }) => session.findDefinition(symbol).then(print),
@@ -254,11 +322,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "inspect",
+    "lisp_inspect",
     {
       title: "Inspect an expression",
       description: "Open the inspector on the result of an expression. Returns inspector parts.",
-      inputSchema: { expression: z.string() },
+      inputSchema: {
+        expression: z.string().describe("Lisp expression whose value should be inspected"),
+      },
+      annotations: STATEFUL_READ,
     },
     "inspect",
     ({ expression }) => session.inspect(expression).then(print),
@@ -267,11 +338,16 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "inspect_part",
+    "lisp_inspect_part",
     {
       title: "Inspect a part",
       description: "Drill into part N of the current inspector view.",
-      inputSchema: { index: z.number().int().nonnegative() },
+      inputSchema: {
+        index: z.number().int().nonnegative().describe(
+          "Zero-based index of the part in the current inspector view",
+        ),
+      },
+      annotations: STATEFUL_READ,
     },
     "inspect",
     ({ index }) => session.inspectorPart(index).then(print),
@@ -280,11 +356,12 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "inspector_pop",
+    "lisp_inspector_pop",
     {
       title: "Pop inspector",
       description: "Return to the previous inspector level.",
       inputSchema: {},
+      annotations: STATEFUL_READ,
     },
     "inspect",
     () => session.inspectorPop().then(print),
@@ -293,11 +370,12 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "inspector_reinspect",
+    "lisp_inspector_reinspect",
     {
       title: "Reinspect current",
       description: "Re-inspect the current object.",
       inputSchema: {},
+      annotations: STATEFUL_READ,
     },
     "inspect",
     () => session.inspectorReinspect().then(print),
@@ -305,11 +383,12 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- debugger ----
 
-  defTool(server, "debug_status", {
+  defTool(server, "lisp_debug_status", {
     title: "Current debugger state",
     description:
       "Report the active debugger condition, restart list, and top stack frames. Returns 'not in debugger' if no debug level is active.",
     inputSchema: {},
+    annotations: READ_ONLY,
   }, () => {
     const d = session.currentDebug();
     if (!d) return txt("not in debugger");
@@ -325,11 +404,16 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "debug_invoke_restart",
+    "lisp_debug_invoke_restart",
     {
       title: "Invoke a restart",
-      description: "Invoke restart N (as listed by debug_status).",
-      inputSchema: { index: z.number().int().nonnegative() },
+      description: "Invoke restart N (as listed by lisp_debug_status).",
+      inputSchema: {
+        index: z.number().int().nonnegative().describe(
+          "Zero-based index into the restart list shown by lisp_debug_status",
+        ),
+      },
+      annotations: MUTATING,
     },
     "restart",
     ({ index }) => session.debugInvokeRestart(index).then(print),
@@ -338,11 +422,12 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "debug_abort",
+    "lisp_debug_abort",
     {
       title: "Abort to top level",
       description: "Throw to the top-level restart, exiting all debugger levels.",
       inputSchema: {},
+      annotations: MUTATING,
     },
     "abort",
     () => session.debugAbort().then(print),
@@ -351,11 +436,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "debug_frame_locals",
+    "lisp_debug_frame_locals",
     {
       title: "Frame locals",
       description: "Local variables (and catch tags) for the given stack frame.",
-      inputSchema: { frame: z.number().int().nonnegative() },
+      inputSchema: {
+        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
+      },
+      annotations: READ_ONLY,
     },
     "frame-locals",
     ({ frame }) => session.debugFrameLocals(frame).then(print),
@@ -364,11 +452,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "debug_frame_source",
+    "lisp_debug_frame_source",
     {
       title: "Frame source location",
       description: "Source location for the given stack frame.",
-      inputSchema: { frame: z.number().int().nonnegative() },
+      inputSchema: {
+        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
+      },
+      annotations: READ_ONLY,
     },
     "frame-source",
     ({ frame }) => session.debugFrameSource(frame).then(print),
@@ -377,14 +468,15 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
   defAsyncTool(
     server,
     ctx,
-    "debug_eval_in_frame",
+    "lisp_debug_eval_in_frame",
     {
       title: "Eval in frame",
       description: "Evaluate an expression in the lexical environment of a stack frame.",
       inputSchema: {
-        frame: z.number().int().nonnegative(),
-        code: z.string(),
+        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
+        code: z.string().describe("Lisp expression to evaluate in that frame's environment"),
       },
+      annotations: MUTATING,
     },
     "frame-eval",
     ({ frame, code }) => session.debugEvalInFrame(frame, code),
@@ -392,15 +484,20 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- handles ----
 
-  defTool(server, "get_handle", {
+  defTool(server, "lisp_get_handle", {
     title: "Fetch a stored handle",
     description:
       "Retrieve a slice of a previously-stored large result by handle id (returned in '…[truncated … in handle hX]' messages).",
     inputSchema: {
-      id: z.string(),
-      offset: z.number().int().nonnegative().optional().default(0),
-      length: z.number().int().positive().optional(),
+      id: z.string().describe("Handle id (e.g. 'h3') from a prior truncation message"),
+      offset: z.number().int().nonnegative().optional().default(0).describe(
+        "Starting character offset within the stored payload (default 0)",
+      ),
+      length: z.number().int().positive().optional().describe(
+        "Maximum characters to return; omitted means read to end",
+      ),
     },
+    annotations: READ_ONLY,
   }, ({ id, offset, length }) => {
     const h = ctx.store.get(id);
     if (!h) return err(`no such handle: ${id}`);
@@ -410,10 +507,11 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     return txt(slice + tail);
   });
 
-  defTool(server, "list_handles", {
+  defTool(server, "lisp_list_handles", {
     title: "List active handles",
     description: "Show ids and metadata for all stored handles.",
     inputSchema: {},
+    annotations: READ_ONLY,
   }, () => {
     const items = ctx.store.list().map((h) =>
       `${h.id}\t${h.kind}\t${h.data.length}b\t${new Date(h.createdAt).toISOString()}`
@@ -423,22 +521,24 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- session info ----
 
-  defTool(server, "set_package", {
+  defTool(server, "lisp_set_package", {
     title: "Set current package",
     description: "Set the default package used by eval, completions, and all other tools. " +
       "Equivalent to CL:IN-PACKAGE but handled client-side — no RPC is sent.",
     inputSchema: {
       package: z.string().describe('Package name (e.g. "cl-user", "om")'),
     },
+    annotations: MUTATING,
   }, ({ package: pkg }) => {
     session.defaultPackage = pkg;
     return txt(`default package set to ${pkg}`);
   });
 
-  defTool(server, "connection_info", {
+  defTool(server, "lisp_connection_info", {
     title: "Slynk connection info",
     description: "Return host Lisp implementation, version, features, and current package.",
     inputSchema: {},
+    annotations: READ_ONLY,
   }, () => {
     const ci = session.connectionInfo;
     if (!ci) return err("not connected");
