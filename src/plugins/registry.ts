@@ -1,13 +1,13 @@
 import type { Plugin } from "./types.ts";
+import { opusmodusPlugin } from "./opusmodus.ts";
 
 /**
  * Hard-coded registry of in-tree plugins. Keys are the names users pass to
  * `--plugin=` / `SWANKMCP_PLUGINS`.
- *
- * Populated by Task 4 with the Opusmodus plugin; intentionally empty here so
- * the registry can land independently with its own tests.
  */
-export const PLUGINS: Record<string, Plugin> = {};
+export const PLUGINS: Record<string, Plugin> = {
+  opusmodus: opusmodusPlugin,
+};
 
 /**
  * Resolve a list of plugin names against `registry`. Order is preserved;
