@@ -12,6 +12,7 @@
 
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
+import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
 import { asList, Keyword, print, type Sexp, str, Sym, sym, T, tagName } from "./slynk/sexp.ts";
 
 export interface SessionOptions {
@@ -62,10 +63,11 @@ function show(r: Sexp): string {
 }
 
 export class Session {
-  public client: SlynkClient;
-  private mreplChannelId: number | null = null;
-  private mreplRemoteId: number | null = null;
-  public defaultPackage: string;
+  #client: SlynkClient;
+  #mreplChannelId: number | null = null;
+  #mreplRemoteId: number | null = null;
+  #defaultPackage: string;
+  #store = new HandleStore();
 
   readonly #host: string;
   readonly #port: number;
@@ -76,10 +78,10 @@ export class Session {
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: SessionOptions) {
-    this.defaultPackage = opts.defaultPackage;
+    this.#defaultPackage = opts.defaultPackage;
     this.#host = opts.host;
     this.#port = opts.port;
-    this.client = new SlynkClient({
+    this.#client = new SlynkClient({
       onWriteString: (text) => {
         if (this.#captureBuf) this.#captureBuf.push(text);
       },
@@ -100,7 +102,7 @@ export class Session {
         const abortIdx = info.restarts.findIndex((r) => /^abort$/i.test(r.name));
         const idx = abortIdx >= 0 ? abortIdx : info.restarts.length - 1;
         if (idx >= 0) {
-          this.client.rex(
+          this.#client.rex(
             [sym("slynk:invoke-nth-restart-for-emacs"), info.level, idx],
             { thread: info.thread },
           ).catch(() => {});
@@ -108,11 +110,33 @@ export class Session {
       },
       onDisconnect: () => {
         // Drop cached per-connection state; next tool call rebuilds via ensureConnected().
-        this.mreplChannelId = null;
-        this.mreplRemoteId = null;
+        this.#mreplChannelId = null;
+        this.#mreplRemoteId = null;
         this.#connectGate.reset();
       },
     });
+  }
+
+  get defaultPackage(): string {
+    return this.#defaultPackage;
+  }
+
+  setDefaultPackage(pkg: string): void {
+    this.#defaultPackage = pkg;
+  }
+
+  // ---- Handle store (truncation cache for oversized tool results) ----
+
+  truncate(kind: string, text: string, maxChars: number): string {
+    return maybeTruncate(this.#store, kind, text, maxChars).text;
+  }
+
+  getHandle(id: string): Handle | undefined {
+    return this.#store.get(id);
+  }
+
+  listHandles(): Handle[] {
+    return this.#store.list();
   }
 
   /**
@@ -132,15 +156,15 @@ export class Session {
 
   async #bootstrap(): Promise<ConnectionInfo> {
     try {
-      await this.client.connect(this.#host, this.#port);
+      await this.#client.connect(this.#host, this.#port);
     } catch (err) {
       throw new SlynkUnreachableError(this.#host, this.#port, err);
     }
 
-    const info = await this.client.rex([sym("slynk:connection-info")]);
+    const info = await this.#client.rex([sym("slynk:connection-info")]);
     const parsed = parseConnectionInfo(info);
 
-    await this.client.rex(
+    await this.#client.rex(
       [
         sym("slynk:slynk-require"),
         [
@@ -150,27 +174,27 @@ export class Session {
       ],
     ).catch(() => {/* contribs may already be loaded */});
 
-    const channelInfo = await this.client.rex(
+    const channelInfo = await this.#client.rex(
       [sym("slynk-mrepl:create-mrepl"), 0],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     ).catch(() => null);
 
     if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
-      this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
-      this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+      this.#mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
+      this.#mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
     }
 
     return parsed;
   }
 
   async stop(): Promise<void> {
-    await this.client.close();
+    await this.#client.close();
   }
 
   /** Connect (if needed) then dispatch an rex. */
   async #rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
     await this.ensureConnected();
-    return this.client.rex(form, opts);
+    return this.#client.rex(form, opts);
   }
 
   /** `#rex` + `show` — most RPCs return a displayable string. */
@@ -199,9 +223,9 @@ export class Session {
   /** Eval a string in the session's default package, capturing stdout. */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
     await this.ensureConnected();
-    const p = pkg ?? this.defaultPackage;
+    const p = pkg ?? this.#defaultPackage;
     const { result, output } = await this.withCapture(() =>
-      this.client.rex(
+      this.#client.rex(
         [sym("slynk:interactive-eval"), code],
         { pkg: p },
       )
@@ -216,19 +240,19 @@ export class Session {
   async compileFile(path: string, load = true): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
 
   async loadFile(path: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:load-file"), path],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
 
   async completions(prefix: string, pkg?: string): Promise<string[]> {
-    const p = pkg ?? this.defaultPackage;
+    const p = pkg ?? this.#defaultPackage;
     const result = await this.#rex(
       [sym("slynk:simple-completions"), prefix, p],
       { pkg: p },
@@ -246,7 +270,7 @@ export class Session {
         [],
         [],
       ],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
     return print(result);
   }
@@ -254,33 +278,33 @@ export class Session {
   describe(symbolName: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:describe-symbol"), symbolName],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
 
   documentation(symbolName: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:documentation-symbol"), symbolName],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
 
   arglist(symbolName: string): Promise<string> {
     return this.#rexStr(
-      [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
-      { pkg: this.defaultPackage },
+      [sym("slynk:operator-arglist"), symbolName, this.#defaultPackage],
+      { pkg: this.#defaultPackage },
     );
   }
 
   macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
+    return this.#rexStr([sym(op), form], { pkg: this.#defaultPackage });
   }
 
   async findDefinition(symbolName: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
 
@@ -289,30 +313,40 @@ export class Session {
   async inspect(expression: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:init-inspector"), expression],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
   async inspectorPart(index: number): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:inspect-nth-part"), index],
-      { pkg: this.defaultPackage },
+      { pkg: this.#defaultPackage },
     );
   }
   async inspectorPop(): Promise<Sexp> {
     return await this.#rex([sym("slynk:inspector-pop")], {
-      pkg: this.defaultPackage,
+      pkg: this.#defaultPackage,
     });
   }
   async inspectorReinspect(): Promise<Sexp> {
     return await this.#rex([sym("slynk:inspector-reinspect")], {
-      pkg: this.defaultPackage,
+      pkg: this.#defaultPackage,
     });
   }
 
   // ---- Debugger ----
 
   currentDebug() {
-    return this.client.debugStack[this.client.debugStack.length - 1] ?? null;
+    return this.#client.debugStack[this.#client.debugStack.length - 1] ?? null;
+  }
+
+  /** Currently-active mREPL channel id (or null if not bootstrapped yet). */
+  get mreplChannelId(): number | null {
+    return this.#mreplChannelId;
+  }
+
+  /** Currently-active mREPL remote thread id (or null if not bootstrapped yet). */
+  get mreplRemoteId(): number | null {
+    return this.#mreplRemoteId;
   }
 
   debugInvokeRestart(restartIndex: number): Promise<Sexp> {
@@ -355,15 +389,15 @@ export class Session {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
     return this.#rexStr(
-      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
+      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.#defaultPackage],
       { thread: top.thread },
     );
   }
 
   /** Send :emacs-interrupt. No-op if not currently connected. */
   interrupt(): void {
-    if (!this.client.isConnected) return;
-    this.client.interrupt(":repl-thread");
+    if (!this.#client.isConnected) return;
+    this.#client.interrupt(":repl-thread");
   }
 }
 

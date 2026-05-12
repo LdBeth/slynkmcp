@@ -326,7 +326,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     annotations: READ_ONLY,
   }, ({ id, offset, length }) => {
-    const h = ctx.store.get(id);
+    const h = session.getHandle(id);
     if (!h) return err(`no such handle: ${id}`);
     const end = length === undefined ? h.data.length : Math.min(h.data.length, offset + length);
     const slice = h.data.slice(offset, end);
@@ -340,7 +340,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     inputSchema: {},
     annotations: READ_ONLY,
   }, () => {
-    const items = ctx.store.list().map((h) =>
+    const items = session.listHandles().map((h) =>
       `${h.id}\t${h.kind}\t${h.data.length}b\t${new Date(h.createdAt).toISOString()}`
     );
     return txt(items.join("\n") || "(no handles)");
@@ -357,7 +357,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     annotations: MUTATING,
   }, ({ package: pkg }) => {
-    session.defaultPackage = pkg;
+    session.setDefaultPackage(pkg);
     return txt(`default package set to ${pkg}`);
   });
 

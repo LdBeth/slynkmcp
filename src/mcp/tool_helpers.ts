@@ -9,11 +9,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { EvalResult, Session } from "../session.ts";
-import { HandleStore, maybeTruncate } from "../handles.ts";
 
 export interface Ctx {
   session: Session;
-  store: HandleStore;
   maxResultChars: number;
 }
 
@@ -74,10 +72,6 @@ export function defTool<S extends z.ZodRawShape>(
   server.registerTool(name, config, handler);
 }
 
-function format(store: HandleStore, kind: string, text: string, maxChars: number): string {
-  return maybeTruncate(store, kind, text, maxChars).text;
-}
-
 function debugSummary(session: Session): string {
   const d = session.currentDebug();
   if (!d) return "";
@@ -105,7 +99,7 @@ export function defAsyncTool<S extends z.ZodRawShape>(
   defTool(server, name, config, async (args) => {
     try {
       const text = await op(args);
-      return txt(format(ctx.store, kind, text, ctx.maxResultChars) + debugSummary(ctx.session));
+      return txt(ctx.session.truncate(kind, text, ctx.maxResultChars) + debugSummary(ctx.session));
     } catch (e) {
       return err((e as Error).message + debugSummary(ctx.session));
     }

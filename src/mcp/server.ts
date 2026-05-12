@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Session } from "../session.ts";
-import { HandleStore } from "../handles.ts";
 import { registerTools } from "./tools.ts";
 import type { Config } from "../config.ts";
 import { loadPlugins } from "../plugins/registry.ts";
@@ -46,8 +45,7 @@ export async function runServer(config: Config): Promise<void> {
     },
   );
 
-  const store = new HandleStore();
-  const ctx = { session, store, maxResultChars: config.maxResultChars };
+  const ctx = { session, maxResultChars: config.maxResultChars };
   registerTools(server, ctx);
   for (const plugin of plugins) {
     plugin.register(server, ctx);
