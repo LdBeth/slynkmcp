@@ -8,7 +8,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Session } from "../session.ts";
+import type { EvalResult, Session } from "../session.ts";
 import { HandleStore, maybeTruncate } from "../handles.ts";
 
 export interface Ctx {
@@ -54,6 +54,10 @@ export function txt(text: string): ToolResult {
 
 export function err(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
+}
+
+export function formatEvalResult(r: EvalResult): string {
+  return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
 }
 
 export function defTool<S extends z.ZodRawShape>(

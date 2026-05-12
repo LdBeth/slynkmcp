@@ -19,7 +19,7 @@ session.client.events.onUnknown = (e) => log("[unknown]", print(e).slice(0, 200)
 session.client.events.onDisconnect = (e) => log("[disconnect]", e?.message);
 
 log("connecting…");
-await session.start("localhost", 4005);
+await session.ensureConnected();
 log("connected");
 
 const ci = session.connectionInfo;

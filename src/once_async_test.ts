@@ -1,0 +1,81 @@
+import { assertEquals, assertRejects } from "@std/assert";
+import { OnceAsync } from "./once_async.ts";
+
+Deno.test("OnceAsync: runs init exactly once on success", async () => {
+  const gate = new OnceAsync();
+  let calls = 0;
+  const init = () => {
+    calls++;
+    return Promise.resolve();
+  };
+  await gate.run(init);
+  await gate.run(init);
+  await gate.run(init);
+  assertEquals(calls, 1);
+  assertEquals(gate.done, true);
+});
+
+Deno.test("OnceAsync: concurrent callers share a single in-flight init", async () => {
+  const gate = new OnceAsync();
+  let calls = 0;
+  let resolveInit!: () => void;
+  const init = () => {
+    calls++;
+    return new Promise<void>((r) => {
+      resolveInit = r;
+    });
+  };
+  const a = gate.run(init);
+  const b = gate.run(init);
+  const c = gate.run(init);
+  assertEquals(calls, 1);
+  resolveInit();
+  await Promise.all([a, b, c]);
+  assertEquals(calls, 1);
+  assertEquals(gate.done, true);
+});
+
+Deno.test("OnceAsync: failure is not memoized — next call retries", async () => {
+  const gate = new OnceAsync();
+  let calls = 0;
+  const init = () => {
+    calls++;
+    if (calls === 1) return Promise.reject(new Error("boom"));
+    return Promise.resolve();
+  };
+  await assertRejects(() => gate.run(init), Error, "boom");
+  assertEquals(gate.done, false);
+  await gate.run(init);
+  assertEquals(calls, 2);
+  assertEquals(gate.done, true);
+});
+
+Deno.test("OnceAsync: concurrent callers all reject when init fails", async () => {
+  const gate = new OnceAsync();
+  let rejectInit!: (e: Error) => void;
+  const init = () =>
+    new Promise<void>((_, reject) => {
+      rejectInit = reject;
+    });
+  const a = gate.run(init);
+  const b = gate.run(init);
+  rejectInit(new Error("nope"));
+  await assertRejects(() => a, Error, "nope");
+  await assertRejects(() => b, Error, "nope");
+  assertEquals(gate.done, false);
+});
+
+Deno.test("OnceAsync: reset() lets init run again", async () => {
+  const gate = new OnceAsync();
+  let calls = 0;
+  const init = () => {
+    calls++;
+    return Promise.resolve();
+  };
+  await gate.run(init);
+  assertEquals(calls, 1);
+  gate.reset();
+  assertEquals(gate.done, false);
+  await gate.run(init);
+  assertEquals(calls, 2);
+});

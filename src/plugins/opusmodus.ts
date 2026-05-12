@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { defAsyncTool, defTool, err, txt } from "../mcp/tool_helpers.ts";
+import { defAsyncTool, defTool, err, formatEvalResult, txt } from "../mcp/tool_helpers.ts";
 import type { Plugin } from "./types.ts";
 
 export const opusmodusPlugin: Plugin = {
@@ -39,9 +39,7 @@ export const opusmodusPlugin: Plugin = {
       },
       "eval",
       ({ snippet }) =>
-        session.eval(`(om:audition-musicxml-omn-snippet '${snippet})`).then((r) =>
-          (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value
-        ),
+        session.eval(`(om:audition-musicxml-omn-snippet '${snippet})`).then(formatEvalResult),
     );
 
     defTool(server, "om_stop", {

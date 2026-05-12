@@ -81,23 +81,32 @@ export class SlynkClient {
 
   constructor(public readonly events: SlynkEvents = {}) {}
 
+  get isConnected(): boolean {
+    return this.#writer !== null;
+  }
+
   async connect(host: string, port: number): Promise<void> {
     this.#conn = await Deno.connect({ hostname: host, port, transport: "tcp" });
     this.#writer = this.#conn.writable.getWriter();
-    this.#readerTask = this.#readLoop(this.#conn.readable).catch((err) => {
-      this.events.onDisconnect?.(err instanceof Error ? err : new Error(String(err)));
-    });
+    const stream = this.#conn.readable;
+    this.#readerTask = this.#readLoop(stream)
+      .catch((err) => {
+        this.events.onDisconnect?.(err instanceof Error ? err : new Error(String(err)));
+      })
+      .finally(() => {
+        try {
+          this.#writer?.releaseLock();
+        } catch { /* noop */ }
+        this.#writer = null;
+        this.#conn = null;
+        this.#readerTask = null;
+      });
   }
 
   async close(): Promise<void> {
     try {
-      this.#writer?.releaseLock();
-    } catch { /* noop */ }
-    try {
       this.#conn?.close();
     } catch { /* noop */ }
-    this.#conn = null;
-    this.#writer = null;
     if (this.#readerTask) await this.#readerTask.catch(() => {});
   }
 
@@ -147,11 +156,12 @@ export class SlynkClient {
       }
       this.#dispatch(parsed);
     }
-    // Stream ended — fail any pending requests.
+    // Stream ended — fail any pending requests and drop per-connection state.
     for (const [, p] of this.#pending) {
       p.reject(new Error("Slynk connection closed"));
     }
     this.#pending.clear();
+    this.debugStack.length = 0;
   }
 
   #dispatch(event: Sexp): void {

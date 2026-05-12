@@ -8,10 +8,21 @@ MCP server bridging Claude Code to a running Lisp image (e.g. Opusmodus) via the
 Claude Code  ──stdio MCP──▶  swankmcp (Deno)  ──TCP──▶  Slynk :4005  ──▶  Opusmodus / LispWorks
 ```
 
-A single long-lived TCP connection to Slynk multiplexes all MCP tool calls. A dedicated mREPL
-channel is created at startup so per-request stdout is captured cleanly. Errors that drop into the
-Slynk debugger are surfaced as MCP tool errors carrying the condition + restart list, and a set of
-`lisp_debug_*` tools let the model query frames, eval in frames, and invoke restarts (or abort).
+A single long-lived TCP connection to Slynk multiplexes all MCP tool calls; the connection and a
+dedicated mREPL channel are opened lazily on the first tool call (see Lifecycle below). Per-request
+stdout is captured via the mREPL channel. Errors that drop into the Slynk debugger are surfaced as
+MCP tool errors carrying the condition + restart list, and a set of `lisp_debug_*` tools let the
+model query frames, eval in frames, and invoke restarts (or abort).
+
+## Lifecycle
+
+The TCP connection to Slynk is opened **lazily on the first tool call**, not at MCP server startup.
+This means swankmcp can be configured into Claude Desktop / Claude Code permanently — if Opusmodus
+isn't running yet, the MCP server still comes up cleanly and tool calls return a clear error message
+("Slynk not reachable on host:port — start the Lisp image and run
+`(slynk:create-server :port N :dont-close t)`") until the Lisp image is available. If Opusmodus
+restarts mid-session, swankmcp drops its cached state and the next tool call transparently
+reconnects.
 
 ## Configuration
 
@@ -149,6 +160,25 @@ it up automatically.
 ```sh
 claude mcp add --scope user swankmcp deno -- run --allow-net --allow-env --env-file /Users/ldbeth/Public/Projects/swankmcp/main.ts
 ```
+
+## Enabling in Claude Desktop
+
+Claude Desktop reads MCP servers from
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS). Generate a ready-to-paste
+snippet:
+
+```sh
+deno task build
+deno task export-config --plugin=opusmodus
+```
+
+The script prints a `mcpServers` snippet on stdout pointing at the bundled `main.mjs`. Whitelisted
+env vars currently exported in your shell (`SLYNK_HOST`, `SLYNK_PORT`, `CL_PACKAGE`,
+`MAX_RESULT_CHARS`, `LOG_LEVEL`, `SWANKMCP_PLUGINS`) are copied into the snippet's `env` block.
+Splice the `mcpServers.swankmcp` entry into your existing config and restart Claude Desktop.
+
+Flags: `--name=<id>` to change the server key, `--plugin=<name>` (repeatable) to activate plugins,
+`--bundle=<abs-path>` to override the bundle path. Pass `-h` for usage.
 
 ### Prerequisites
 

@@ -6,7 +6,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { print } from "../slynk/sexp.ts";
-import { type Ctx, defAsyncTool, defTool, err, MUTATING, READ_ONLY, txt } from "./tool_helpers.ts";
+import {
+  type Ctx,
+  defAsyncTool,
+  defTool,
+  err,
+  formatEvalResult,
+  MUTATING,
+  READ_ONLY,
+  txt,
+} from "./tool_helpers.ts";
 
 export type { Ctx };
 
@@ -22,8 +31,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Evaluate Lisp",
       description: "Evaluate a Common Lisp expression in the running image. " +
-        "Returns the printed value plus any captured stdout. " +
-        "Defaults to the configured Opusmodus package.",
+        "Returns the printed value plus any captured stdout.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: z.string().optional().describe("Override the default package for this call"),
@@ -31,10 +39,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     "eval",
-    ({ code, package: pkg }) =>
-      session.eval(code, pkg).then((r) =>
-        (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value
-      ),
+    ({ code, package: pkg }) => session.eval(code, pkg).then(formatEvalResult),
   );
 
   defAsyncTool(

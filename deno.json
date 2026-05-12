@@ -1,11 +1,13 @@
 {
   "tasks": {
     "check": "deno fmt --check && deno lint && deno check",
-    "build": "deno bundle --minify main.ts -o main.mjs"
+    "build": "deno bundle --minify main.ts -o main.mjs",
+    "export-config": "deno run --allow-env scripts/export-desktop-config.ts"
   },
   "imports": {
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.29.0",
     "@std/assert": "jsr:@std/assert@^1.0.19",
+    "@std/path": "jsr:@std/path@^1.1.4",
     "zod": "npm:zod@^4.4.3"
   },
   "fmt": {
