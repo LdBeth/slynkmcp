@@ -56,6 +56,11 @@ export interface EvalResult {
   output: string;
 }
 
+/** Coerce a Sexp to a string, using `print` for non-strings. */
+function show(r: Sexp): string {
+  return typeof r === "string" ? r : print(r);
+}
+
 export class Session {
   public client: SlynkClient;
   private mreplChannelId: number | null = null;
@@ -168,6 +173,12 @@ export class Session {
     return this.client.rex(form, opts);
   }
 
+  /** `#rex` + `show` — most RPCs return a displayable string. */
+  async #rexStr(form: Sexp, opts: RexOptions = {}): Promise<string> {
+    const r = await this.#rex(form, opts);
+    return show(r);
+  }
+
   /** Run an async block while capturing all incoming write-string output. */
   withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
     const run = async () => {
@@ -195,10 +206,7 @@ export class Session {
         { pkg: p },
       )
     );
-    return {
-      value: typeof result === "string" ? result : print(result),
-      output,
-    };
+    return { value: show(result), output };
   }
 
   // -------------------------------------------------------------------
@@ -243,37 +251,30 @@ export class Session {
     return print(result);
   }
 
-  async describe(symbolName: string): Promise<string> {
-    const r = await this.#rex(
+  describe(symbolName: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:describe-symbol"), symbolName],
       { pkg: this.defaultPackage },
     );
-    return typeof r === "string" ? r : print(r);
   }
 
-  async documentation(symbolName: string): Promise<string> {
-    const r = await this.#rex(
+  documentation(symbolName: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:documentation-symbol"), symbolName],
       { pkg: this.defaultPackage },
     );
-    return typeof r === "string" ? r : print(r);
   }
 
-  async arglist(symbolName: string): Promise<string> {
-    const r = await this.#rex(
+  arglist(symbolName: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
       { pkg: this.defaultPackage },
     );
-    return typeof r === "string" ? r : print(r);
   }
 
-  async macroexpand(form: string, all = false): Promise<string> {
+  macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    const r = await this.#rex(
-      [sym(op), form],
-      { pkg: this.defaultPackage },
-    );
-    return typeof r === "string" ? r : print(r);
+    return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
   }
 
   async findDefinition(symbolName: string): Promise<Sexp> {
@@ -353,10 +354,10 @@ export class Session {
   debugEvalInFrame(frameIndex: number, code: string): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rex(
+    return this.#rexStr(
       [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
       { thread: top.thread },
-    ).then((r) => typeof r === "string" ? r : print(r));
+    );
   }
 
   /** Send :emacs-interrupt. No-op if not currently connected. */

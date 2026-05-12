@@ -14,10 +14,11 @@ export function encodeFrame(payload: string): Uint8Array {
   if (body.length > 0xffffff) {
     throw new Error(`Frame too large: ${body.length} bytes (max 16777215)`);
   }
-  const header = encoder.encode(body.length.toString(16).padStart(6, "0"));
-  const out = new Uint8Array(header.length + body.length);
-  out.set(header, 0);
-  out.set(body, header.length);
+  const hex = body.length.toString(16).padStart(6, "0");
+  const out = new Uint8Array(6 + body.length);
+  // Header is always 6 ASCII hex chars — write directly, no intermediate encode.
+  for (let i = 0; i < 6; i++) out[i] = hex.charCodeAt(i);
+  out.set(body, 6);
   return out;
 }
 
