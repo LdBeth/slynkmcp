@@ -361,23 +361,28 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     return txt(`default package set to ${pkg}`);
   });
 
-  defTool(server, "lisp_connection_info", {
-    title: "Slynk connection info",
-    description: "Return host Lisp implementation, version, features, and current package.",
-    inputSchema: {},
-    annotations: READ_ONLY,
-  }, () => {
-    const ci = session.connectionInfo;
-    if (!ci) return err("not connected");
-    return txt(
-      `pid: ${ci.pid}\n` +
-        `lisp: ${ci.lispImplementation.name} ${ci.lispImplementation.version} (${ci.lispImplementation.type})\n` +
+  defAsyncTool(
+    server,
+    ctx,
+    "lisp_connection_info",
+    {
+      title: "Slynk connection info",
+      description: "Return host Lisp implementation, version, features, and current package.",
+      inputSchema: {},
+      annotations: READ_ONLY,
+    },
+    "connection-info",
+    async () => {
+      const ci = await session.getConnectionInfo();
+      return `pid: ${ci.pid}\n` +
+        `lisp: ${ci.lispImplementation.name} ${ci.lispImplementation.version} ` +
+        `(${ci.lispImplementation.type})\n` +
         `machine: ${ci.machine.instance} (${ci.machine.type})\n` +
         `package: ${session.defaultPackage} (initial: ${ci.packageName}, prompt: ${ci.prompt})\n` +
         `slynk version: ${ci.version}\n` +
         `features (${ci.features.length}): ${ci.features.slice(0, 30).join(" ")}${
           ci.features.length > 30 ? " …" : ""
-        }`,
-    );
-  });
+        }`;
+    },
+  );
 }

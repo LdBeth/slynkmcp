@@ -22,14 +22,15 @@ log("connecting…");
 await session.ensureConnected();
 log("connected");
 
-const ci = session.connectionInfo;
+const ci = await session.getConnectionInfo();
 if (!ci) {
   log("no connection-info parsed");
   Deno.exit(1);
 }
 log(`pid=${ci.pid} lisp=${ci.lispImplementation.name} ${ci.lispImplementation.version}`);
 log(`package=${ci.packageName} prompt=${ci.prompt}`);
-log(`mREPL channel=${session.mreplChannelId} remote=${session.mreplRemoteId}`);
+// deno-lint-ignore no-explicit-any
+log(`mREPL channel=${(session as any).mreplChannelId} remote=${(session as any).mreplRemoteId}`);
 
 log("\n--- (+ 1 2) ---");
 log(await session.eval("(+ 1 2)"));

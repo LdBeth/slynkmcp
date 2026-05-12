@@ -89,18 +89,19 @@ export class SlynkClient {
     this.#conn = await Deno.connect({ hostname: host, port, transport: "tcp" });
     this.#writer = this.#conn.writable.getWriter();
     const stream = this.#conn.readable;
-    this.#readerTask = this.#readLoop(stream)
-      .catch((err) => {
-        this.events.onDisconnect?.(err instanceof Error ? err : new Error(String(err)));
-      })
-      .finally(() => {
-        try {
-          this.#writer?.releaseLock();
-        } catch { /* noop */ }
-        this.#writer = null;
-        this.#conn = null;
-        this.#readerTask = null;
-      });
+    this.#readerTask = this.#readLoop(stream).then(
+      () => undefined,
+      (err) => err instanceof Error ? err : new Error(String(err)),
+    ).then((maybeErr) => {
+      try {
+        this.#writer?.releaseLock();
+      } catch { /* noop */ }
+      this.#writer = null;
+      this.#conn = null;
+      this.#readerTask = null;
+      // Fires once per connection lifetime, on both clean close and read errors.
+      this.events.onDisconnect?.(maybeErr);
+    });
   }
 
   async close(): Promise<void> {

@@ -2,25 +2,27 @@
  * Single-flight async initializer.
  *
  * - First caller triggers `init()`; concurrent callers await the same promise.
- * - On success the result is memoized — subsequent `run()` calls are no-ops.
+ * - On success the resolved value is memoized — subsequent `run()` calls return
+ *   it without re-running `init()`.
  * - On failure nothing is memoized, so the next `run()` call retries.
- * - `reset()` forgets the success and lets the next call re-run `init()`.
+ * - `reset()` forgets the memoized value and lets the next call re-run `init()`.
  */
-export class OnceAsync {
-  #inFlight: Promise<void> | null = null;
-  #done = false;
+export class OnceAsync<T = void> {
+  #inFlight: Promise<T> | null = null;
+  #result: { value: T } | null = null;
 
   get done(): boolean {
-    return this.#done;
+    return this.#result !== null;
   }
 
-  run(init: () => Promise<void>): Promise<void> {
-    if (this.#done) return Promise.resolve();
+  run(init: () => Promise<T>): Promise<T> {
+    if (this.#result) return Promise.resolve(this.#result.value);
     if (this.#inFlight) return this.#inFlight;
     const p = (async () => {
       try {
-        await init();
-        this.#done = true;
+        const v = await init();
+        this.#result = { value: v };
+        return v;
       } finally {
         this.#inFlight = null;
       }
@@ -30,7 +32,7 @@ export class OnceAsync {
   }
 
   reset(): void {
-    this.#done = false;
+    this.#result = null;
     this.#inFlight = null;
   }
 }

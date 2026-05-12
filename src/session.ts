@@ -57,15 +57,14 @@ export interface EvalResult {
 }
 
 export class Session {
-  client: SlynkClient;
-  connectionInfo: ConnectionInfo | null = null;
-  mreplChannelId: number | null = null;
-  mreplRemoteId: number | null = null;
-  defaultPackage: string;
+  public client: SlynkClient;
+  private mreplChannelId: number | null = null;
+  private mreplRemoteId: number | null = null;
+  public defaultPackage: string;
 
   readonly #host: string;
   readonly #port: number;
-  readonly #connectGate = new OnceAsync();
+  readonly #connectGate = new OnceAsync<ConnectionInfo>();
   /** Currently-capturing output buffer (set while a tool call is in flight). */
   #captureBuf: string[] | null = null;
   /** Mutex queue for output-capturing calls. */
@@ -104,7 +103,6 @@ export class Session {
       },
       onDisconnect: () => {
         // Drop cached per-connection state; next tool call rebuilds via ensureConnected().
-        this.connectionInfo = null;
         this.mreplChannelId = null;
         this.mreplRemoteId = null;
         this.#connectGate.reset();
@@ -119,36 +117,45 @@ export class Session {
    * connection is alive.
    */
   async ensureConnected(): Promise<void> {
-    await this.#connectGate.run(async () => {
-      try {
-        await this.client.connect(this.#host, this.#port);
-      } catch (err) {
-        throw new SlynkUnreachableError(this.#host, this.#port, err);
-      }
+    await this.#connectGate.run(() => this.#bootstrap());
+  }
 
-      const info = await this.client.rex([sym("slynk:connection-info")]);
-      this.connectionInfo = parseConnectionInfo(info);
+  /** Resolve cached connection info, connecting on demand. */
+  getConnectionInfo(): Promise<ConnectionInfo> {
+    return this.#connectGate.run(() => this.#bootstrap());
+  }
 
-      await this.client.rex(
+  async #bootstrap(): Promise<ConnectionInfo> {
+    try {
+      await this.client.connect(this.#host, this.#port);
+    } catch (err) {
+      throw new SlynkUnreachableError(this.#host, this.#port, err);
+    }
+
+    const info = await this.client.rex([sym("slynk:connection-info")]);
+    const parsed = parseConnectionInfo(info);
+
+    await this.client.rex(
+      [
+        sym("slynk:slynk-require"),
         [
-          sym("slynk:slynk-require"),
-          [
-            sym("quote"),
-            [sym("slynk/mrepl"), sym("slynk/indentation"), sym("slynk/apropos")],
-          ],
+          sym("quote"),
+          [sym("slynk/mrepl"), sym("slynk/indentation"), sym("slynk/apropos")],
         ],
-      ).catch(() => {/* contribs may already be loaded */});
+      ],
+    ).catch(() => {/* contribs may already be loaded */});
 
-      const channelInfo = await this.client.rex(
-        [sym("slynk-mrepl:create-mrepl"), 0],
-        { pkg: this.defaultPackage },
-      ).catch(() => null);
+    const channelInfo = await this.client.rex(
+      [sym("slynk-mrepl:create-mrepl"), 0],
+      { pkg: this.defaultPackage },
+    ).catch(() => null);
 
-      if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
-        this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
-        this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
-      }
-    });
+    if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
+      this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
+      this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+    }
+
+    return parsed;
   }
 
   async stop(): Promise<void> {
@@ -307,50 +314,49 @@ export class Session {
     return this.client.debugStack[this.client.debugStack.length - 1] ?? null;
   }
 
-  async debugInvokeRestart(restartIndex: number): Promise<Sexp> {
+  debugInvokeRestart(restartIndex: number): Promise<Sexp> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return await this.#rex(
+    return this.#rex(
       [sym("slynk:invoke-nth-restart-for-emacs"), top.level, restartIndex],
       { thread: top.thread },
     );
   }
 
-  async debugAbort(): Promise<Sexp> {
+  debugAbort(): Promise<Sexp> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return await this.#rex(
+    return this.#rex(
       [sym("slynk:throw-to-toplevel")],
       { thread: top.thread },
     );
   }
 
-  async debugFrameLocals(frameIndex: number): Promise<Sexp> {
+  debugFrameLocals(frameIndex: number): Promise<Sexp> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return await this.#rex(
+    return this.#rex(
       [sym("slynk:frame-locals-and-catch-tags"), frameIndex],
       { thread: top.thread },
     );
   }
 
-  async debugFrameSource(frameIndex: number): Promise<Sexp> {
+  debugFrameSource(frameIndex: number): Promise<Sexp> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return await this.#rex(
+    return this.#rex(
       [sym("slynk:frame-source-location"), frameIndex],
       { thread: top.thread },
     );
   }
 
-  async debugEvalInFrame(frameIndex: number, code: string): Promise<string> {
+  debugEvalInFrame(frameIndex: number, code: string): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    const r = await this.#rex(
+    return this.#rex(
       [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
       { thread: top.thread },
-    );
-    return typeof r === "string" ? r : print(r);
+    ).then((r) => typeof r === "string" ? r : print(r));
   }
 
   /** Send :emacs-interrupt. No-op if not currently connected. */

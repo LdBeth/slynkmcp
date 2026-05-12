@@ -65,6 +65,21 @@ Deno.test("OnceAsync: concurrent callers all reject when init fails", async () =
   assertEquals(gate.done, false);
 });
 
+Deno.test("OnceAsync<T>: run() returns init's resolved value, memoized across calls", async () => {
+  const gate = new OnceAsync<{ pid: number }>();
+  let calls = 0;
+  const init = () => {
+    calls++;
+    return Promise.resolve({ pid: 42 });
+  };
+  const a = await gate.run(init);
+  const b = await gate.run(init);
+  assertEquals(a, { pid: 42 });
+  assertEquals(b, { pid: 42 });
+  assertEquals(a, b);
+  assertEquals(calls, 1);
+});
+
 Deno.test("OnceAsync: reset() lets init run again", async () => {
   const gate = new OnceAsync();
   let calls = 0;
