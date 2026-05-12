@@ -64,9 +64,9 @@ function show(r: Sexp): string {
 
 export class Session {
   #client: SlynkClient;
-  #mreplChannelId: number | null = null;
-  #mreplRemoteId: number | null = null;
-  #defaultPackage: string;
+  private mreplChannelId: number | null = null;
+  private mreplRemoteId: number | null = null;
+  public defaultPackage: string;
   #store = new HandleStore();
 
   readonly #host: string;
@@ -78,7 +78,7 @@ export class Session {
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: SessionOptions) {
-    this.#defaultPackage = opts.defaultPackage;
+    this.defaultPackage = opts.defaultPackage;
     this.#host = opts.host;
     this.#port = opts.port;
     this.#client = new SlynkClient({
@@ -110,19 +110,11 @@ export class Session {
       },
       onDisconnect: () => {
         // Drop cached per-connection state; next tool call rebuilds via ensureConnected().
-        this.#mreplChannelId = null;
-        this.#mreplRemoteId = null;
+        this.mreplChannelId = null;
+        this.mreplRemoteId = null;
         this.#connectGate.reset();
       },
     });
-  }
-
-  get defaultPackage(): string {
-    return this.#defaultPackage;
-  }
-
-  setDefaultPackage(pkg: string): void {
-    this.#defaultPackage = pkg;
   }
 
   // ---- Handle store (truncation cache for oversized tool results) ----
@@ -176,12 +168,12 @@ export class Session {
 
     const channelInfo = await this.#client.rex(
       [sym("slynk-mrepl:create-mrepl"), 0],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     ).catch(() => null);
 
     if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
-      this.#mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
-      this.#mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+      this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
+      this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
     }
 
     return parsed;
@@ -223,7 +215,7 @@ export class Session {
   /** Eval a string in the session's default package, capturing stdout. */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
     await this.ensureConnected();
-    const p = pkg ?? this.#defaultPackage;
+    const p = pkg ?? this.defaultPackage;
     const { result, output } = await this.withCapture(() =>
       this.#client.rex(
         [sym("slynk:interactive-eval"), code],
@@ -240,19 +232,19 @@ export class Session {
   async compileFile(path: string, load = true): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
 
   async loadFile(path: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:load-file"), path],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
 
   async completions(prefix: string, pkg?: string): Promise<string[]> {
-    const p = pkg ?? this.#defaultPackage;
+    const p = pkg ?? this.defaultPackage;
     const result = await this.#rex(
       [sym("slynk:simple-completions"), prefix, p],
       { pkg: p },
@@ -270,7 +262,7 @@ export class Session {
         [],
         [],
       ],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
     return print(result);
   }
@@ -278,33 +270,33 @@ export class Session {
   describe(symbolName: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:describe-symbol"), symbolName],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
 
   documentation(symbolName: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:documentation-symbol"), symbolName],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
 
   arglist(symbolName: string): Promise<string> {
     return this.#rexStr(
-      [sym("slynk:operator-arglist"), symbolName, this.#defaultPackage],
-      { pkg: this.#defaultPackage },
+      [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
+      { pkg: this.defaultPackage },
     );
   }
 
   macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    return this.#rexStr([sym(op), form], { pkg: this.#defaultPackage });
+    return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
   }
 
   async findDefinition(symbolName: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
 
@@ -313,23 +305,23 @@ export class Session {
   async inspect(expression: string): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:init-inspector"), expression],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
   async inspectorPart(index: number): Promise<Sexp> {
     return await this.#rex(
       [sym("slynk:inspect-nth-part"), index],
-      { pkg: this.#defaultPackage },
+      { pkg: this.defaultPackage },
     );
   }
   async inspectorPop(): Promise<Sexp> {
     return await this.#rex([sym("slynk:inspector-pop")], {
-      pkg: this.#defaultPackage,
+      pkg: this.defaultPackage,
     });
   }
   async inspectorReinspect(): Promise<Sexp> {
     return await this.#rex([sym("slynk:inspector-reinspect")], {
-      pkg: this.#defaultPackage,
+      pkg: this.defaultPackage,
     });
   }
 
@@ -337,16 +329,6 @@ export class Session {
 
   currentDebug() {
     return this.#client.debugStack[this.#client.debugStack.length - 1] ?? null;
-  }
-
-  /** Currently-active mREPL channel id (or null if not bootstrapped yet). */
-  get mreplChannelId(): number | null {
-    return this.#mreplChannelId;
-  }
-
-  /** Currently-active mREPL remote thread id (or null if not bootstrapped yet). */
-  get mreplRemoteId(): number | null {
-    return this.#mreplRemoteId;
   }
 
   debugInvokeRestart(restartIndex: number): Promise<Sexp> {
@@ -389,7 +371,7 @@ export class Session {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
     return this.#rexStr(
-      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.#defaultPackage],
+      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
       { thread: top.thread },
     );
   }

@@ -357,7 +357,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     annotations: MUTATING,
   }, ({ package: pkg }) => {
-    session.setDefaultPackage(pkg);
+    session.defaultPackage = pkg;
     return txt(`default package set to ${pkg}`);
   });
 
