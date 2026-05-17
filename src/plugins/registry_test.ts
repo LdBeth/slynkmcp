@@ -2,8 +2,8 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { loadPlugins } from "./registry.ts";
 import type { Plugin } from "./types.ts";
 
-const fakeA: Plugin = { name: "a", register: () => {} };
-const fakeB: Plugin = { name: "b", register: () => {} };
+const fakeA: Plugin = { name: "a", instructions: "no", register: () => {} };
+const fakeB: Plugin = { name: "b", instructions: "no", register: () => {} };
 const TEST_REGISTRY: Record<string, Plugin> = { a: fakeA, b: fakeB };
 
 Deno.test("loadPlugins - resolves names in given order", () => {

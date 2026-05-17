@@ -12,5 +12,6 @@ import type { Ctx } from "../mcp/tool_helpers.ts";
  */
 export interface Plugin {
   readonly name: string;
+  readonly instructions: string;
   register(server: McpServer, ctx: Ctx): void;
 }

@@ -19,6 +19,8 @@ import type { Plugin } from "./types.ts";
 
 export const opusmodusPlugin: Plugin = {
   name: "opusmodus",
+  instructions: `Opusmodus: 'om_audition_snippet', 'om_stop' plays/stop omn snippet, ` +
+    `'om_function_search' search functions. `,
   register(server, ctx) {
     const { session } = ctx;
 
