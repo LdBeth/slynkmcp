@@ -7,7 +7,14 @@
  */
 
 import { z } from "zod";
-import { defAsyncTool, defTool, err, formatEvalResult, txt } from "../mcp/tool_helpers.ts";
+import {
+  defAsyncTool,
+  defTool,
+  err,
+  formatEvalResult,
+  READ_ONLY,
+  txt,
+} from "../mcp/tool_helpers.ts";
 import type { Plugin } from "./types.ts";
 
 export const opusmodusPlugin: Plugin = {
@@ -61,5 +68,42 @@ export const opusmodusPlugin: Plugin = {
         return err((e as Error).message);
       }
     });
+
+    const PROPERTY_FIELDS = ["category", "operation", "input", "output", "intent"] as const;
+
+    defAsyncTool(
+      server,
+      ctx,
+      "om_function_search",
+      {
+        title: "Search Opusmodus functions",
+        description: "Search Opusmodus's function metadata. Each Opusmodus function carries a " +
+          "descriptor (category operation input output intent). Call with NO arguments to list " +
+          "the valid symbol values for every property field. Call with one or more filters to " +
+          "get the names of functions matching ALL supplied properties. Filter values must be " +
+          "valid symbols from the no-argument listing (e.g. category 'filter', operation " +
+          "'generate', output 'float', intent 'unison').",
+        inputSchema: {
+          category: z.string().optional().describe("Function category"),
+          operation: z.string().optional().describe("Operation type"),
+          input: z.string().optional().describe("Expected input type"),
+          output: z.string().optional().describe("Output type"),
+          intent: z.string().optional().describe("Conceptual intent"),
+        },
+        annotations: READ_ONLY,
+      },
+      "eval",
+      (args) => {
+        const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
+        if (provided.length === 0) {
+          const form = `(list ${
+            PROPERTY_FIELDS.map((f) => `:${f} (om:function-property-values :${f})`).join(" ")
+          })`;
+          return session.eval(form).then(formatEvalResult);
+        }
+        const kwargs = provided.map((f) => `:${f} '${args[f]}`).join(" ");
+        return session.eval(`(om:function-search ${kwargs})`).then(formatEvalResult);
+      },
+    );
   },
 };

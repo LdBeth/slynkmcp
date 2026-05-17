@@ -52,12 +52,14 @@ export async function runServer(config: Config): Promise<void> {
   }
 
   const transport = new StdioServerTransport();
-  await server.connect(transport);
 
   // Close the Slynk TCP connection when the MCP transport shuts down
   // (stdin closes, or the process receives SIGTERM/SIGINT).
+  // Must be wired before connect() so a fast close doesn't miss the event.
   const shutdown = () => session.stop().catch(() => {});
   transport.onclose = shutdown;
   Deno.addSignalListener("SIGTERM", shutdown);
   Deno.addSignalListener("SIGINT", shutdown);
+
+  await server.connect(transport);
 }
