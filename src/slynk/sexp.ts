@@ -69,7 +69,7 @@ class Reader {
   skipWs(): void {
     while (!this.eof()) {
       const c = this.peek();
-      if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+      if (" \t\n\r".includes(c)) {
         this.pos++;
       } else if (c === ";") {
         while (!this.eof() && this.next() !== "\n") { /* skip */ }
@@ -105,11 +105,7 @@ class Reader {
         break;
       }
       // Detect ` . ` (dotted pair) — must have spaces on both sides per CL.
-      if (
-        this.peek() === "." &&
-        (this.src[this.pos + 1] === " " || this.src[this.pos + 1] === "\t" ||
-          this.src[this.pos + 1] === "\n")
-      ) {
+      if (this.peek() === "." && " \t\n".includes(this.src[this.pos + 1])) {
         this.pos++;
         this.skipWs();
         dottedTail = this.readSexp();
@@ -131,13 +127,7 @@ class Reader {
       if (this.eof()) throw new Error("Unterminated string");
       const c = this.next();
       if (c === '"') return out;
-      if (c === "\\") {
-        const esc = this.next();
-        // CL string escapes only \" and \\ on the wire; pass others through.
-        out += esc;
-      } else {
-        out += c;
-      }
+      out += c === "\\" ? this.next() : c;
     }
   }
 
@@ -145,10 +135,7 @@ class Reader {
     let tok = "";
     while (!this.eof()) {
       const c = this.peek();
-      if (
-        c === "(" || c === ")" || c === '"' || c === "'" || c === " " ||
-        c === "\t" || c === "\n" || c === "\r"
-      ) {
+      if ("()\"' \t\n\r".includes(c)) {
         break;
       }
       tok += this.next();
@@ -160,16 +147,14 @@ class Reader {
 
 function foldDotted(items: Sexp[], tail: Sexp): Sexp {
   // Build a proper list when possible; fall back to Cons chain for true dots.
-  if (Array.isArray(tail)) return [...items, ...tail];
+  if (Array.isArray(tail)) return items.concat(tail);
   return items.reduceRight<Sexp>((acc, item) => new Cons(item, acc), tail);
 }
 
 function parseAtom(tok: string): Sexp {
-  if (tok === "nil" || tok === "NIL") return NIL;
-  if (tok === "t" || tok === "T") return T;
   if (tok[0] === ":") return new Keyword(tok.slice(1).toLowerCase());
 
-  // Integer
+  // Integer (must check before lowercasing — BigInt rejects lowercase hex)
   if (/^-?\d+$/.test(tok)) {
     const n = Number(tok);
     if (Number.isSafeInteger(n)) return n;
@@ -179,8 +164,11 @@ function parseAtom(tok: string): Sexp {
   if (/^-?\d+\.\d*([eE][+-]?\d+)?$/.test(tok) || /^-?\d+[eE][+-]?\d+$/.test(tok)) {
     return Number(tok);
   }
-  // Symbols are case-insensitive in CL; Slynk emits lowercase by default.
-  return new Sym(tok.toLowerCase());
+
+  const lower = tok.toLowerCase();
+  if (lower === "nil") return NIL;
+  if (lower === "t") return T;
+  return new Sym(lower);
 }
 
 export function read(src: string): Sexp {
@@ -198,8 +186,7 @@ export function read(src: string): Sexp {
 export function print(s: Sexp): string {
   if (s === null) return "nil";
   if (typeof s === "boolean") return s ? "t" : "nil";
-  if (typeof s === "number") return s.toString();
-  if (typeof s === "bigint") return s.toString();
+  if (typeof s === "number" || typeof s === "bigint") return s.toString();
   if (typeof s === "string") return printString(s);
   if (s instanceof Sym) return s.name;
   if (s instanceof Keyword) return ":" + s.name;

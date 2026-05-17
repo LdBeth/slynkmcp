@@ -387,12 +387,12 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
   // Slynk returns a property list: (:pid N :lisp-implementation (...) ...)
   const plist = asList(info, "connection-info");
 
-  function plistGet(k: string): Sexp | undefined {
+  function plistGet(k: string): Sexp {
     for (let i = 0; i < plist.length - 1; i += 2) {
       const key = plist[i];
       if (key instanceof Keyword && key.name === k) return plist[i + 1];
     }
-    return undefined;
+    return [];
   }
 
   function plistStr(subplist: Sexp[], k: string): string {
@@ -403,10 +403,10 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     return "";
   }
 
-  const lispImpl = asList(plistGet("lisp-implementation") ?? [], "lisp-implementation");
-  const machine = asList(plistGet("machine") ?? [], "machine");
-  const features = asList(plistGet("features") ?? [], "features");
-  const pkgInfo = asList(plistGet("package") ?? [], "package");
+  const lispImpl = asList(plistGet("lisp-implementation"), "lisp-implementation");
+  const machine = asList(plistGet("machine"), "machine");
+  const features = asList(plistGet("features"), "features");
+  const pkgInfo = asList(plistGet("package"), "package");
   const pid = plistGet("pid");
 
   return {
