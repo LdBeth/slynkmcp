@@ -127,9 +127,8 @@ export class SlynkClient {
   rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
     if (!this.#writer) throw new Error("Not connected");
     const id = this.#nextId++;
-    // NOTE: at most one interactive request should be in flight at a time.
-    // A second concurrent interactive rex would silently overwrite #interactiveId,
-    // causing the first debugger entry to lose its interactive marking.
+    // Single-flight (see RexOptions.interactive): a concurrent interactive rex
+    // would clobber this id and the first debugger entry would lose its marking.
     if (opts.interactive) this.#interactiveId = id;
     const pkg = opts.pkg ?? "COMMON-LISP-USER";
     const message: Sexp = [kw("emacs-rex"), form, pkg, threadSexp(opts.thread), id];
