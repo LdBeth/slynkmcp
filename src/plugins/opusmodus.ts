@@ -36,16 +36,6 @@ export const opusmodusPlugin: Plugin = {
   register(server, ctx) {
     const { session } = ctx;
 
-    // Every Slynk eval flows through this one Session, so overriding `eval`
-    // here wraps the core `lisp_eval` tool plus this plugin's own tools. The
-    // (let ((*do-verbose* nil)) ...) binding silences Opusmodus's verbose
-    // progress output so it does not pollute MCP results.
-    const baseEval = session.eval.bind(
-      session,
-    ) as ((code: Sexp, pkg?: string) => ReturnType<typeof session.eval>);
-    session.eval = (code: string, pkg) =>
-      baseEval([sym("cl:let"), [[sym("om::*do-verbose*"), NIL]], code], pkg);
-
     defTool(
       server,
       "om_audition_snippet",

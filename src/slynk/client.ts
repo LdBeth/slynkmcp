@@ -5,10 +5,8 @@
  * RPC model: every `rex` call generates a fresh request id, sends an
  * `(:emacs-rex FORM PACKAGE THREAD ID)` frame, and resolves when the matching
  * `(:return (:ok ...) ID)` frame arrives. `(:return (:abort REASON) ID)`
- * rejects the promise. If the request triggers a debugger entry, it stays
- * pending until the debugger is exited (typically via `debug_invoke_restart`
- * or `debug_abort`) — at which point Slynk sends `:debug-return` and then
- * `:return`.
+ * rejects the promise. Debugger entries are always auto-aborted via the
+ * `onDebugActivate` callback.
  */
 
 import { encodeFrame, readFrames } from "./framing.ts";
@@ -29,16 +27,9 @@ import {
 export type DebugInfo = {
   thread: number;
   level: number;
-  /** [conditionMessage, conditionType, extras] */
   condition: { message: string; type: string };
-  /** Each restart: [name, description] */
   restarts: { name: string; description: string }[];
-  /** Frames as printed by Slynk: [index, "frame description"] */
   frames: { index: number; description: string }[];
-  /** continuation ids that are waiting on this debug level */
-  pendingIds: number[];
-  /** true when this debugger was triggered by the current interactive request */
-  interactive: boolean;
 };
 
 export interface SlynkEvents {
@@ -63,11 +54,6 @@ export interface RexOptions {
   pkg?: string;
   /** Slynk thread designator; "t" (default), ":repl-thread", or a number */
   thread?: "t" | ":repl-thread" | number;
-  /**
-   * Mark this request interactive: a debugger it triggers is NOT auto-aborted
-   * by the caller. At most one interactive request is in flight at a time.
-   */
-  interactive?: boolean;
 }
 
 function threadSexp(thread?: "t" | ":repl-thread" | number): Sexp {
@@ -85,9 +71,6 @@ export class SlynkClient {
 
   /** Stack of active debug levels (innermost last). */
   debugStack: DebugInfo[] = [];
-
-  /** Id of the in-flight interactive request, or null. Cleared when it settles. */
-  #interactiveId: number | null = null;
 
   constructor(public readonly events: SlynkEvents = {}) {}
 
@@ -127,9 +110,6 @@ export class SlynkClient {
   rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
     if (!this.#writer) throw new Error("Not connected");
     const id = this.#nextId++;
-    // Single-flight (see RexOptions.interactive): a concurrent interactive rex
-    // would clobber this id and the first debugger entry would lose its marking.
-    if (opts.interactive) this.#interactiveId = id;
     const pkg = opts.pkg ?? "COMMON-LISP-USER";
     const message: Sexp = [kw("emacs-rex"), form, pkg, threadSexp(opts.thread), id];
     const promise = new Promise<Sexp>((resolve, reject) => {
@@ -177,7 +157,6 @@ export class SlynkClient {
       p.reject(new Error("Slynk connection closed"));
     }
     this.#pending.clear();
-    this.#interactiveId = null;
     this.debugStack.length = 0;
   }
 
@@ -201,7 +180,6 @@ export class SlynkClient {
         const p = this.#pending.get(id);
         if (!p) return;
         this.#pending.delete(id);
-        if (id === this.#interactiveId) this.#interactiveId = null;
         const status = result[0];
         if (isKw(status, "ok")) {
           p.resolve(result[1] ?? []);
@@ -223,8 +201,6 @@ export class SlynkClient {
         const condList = asList(event[3]!, ":debug condition");
         const restartList = asList(event[4]!, ":debug restarts");
         const frameList = asList(event[5]!, ":debug frames");
-        const pendingList = asList(event[6] ?? [], ":debug pending");
-        const pendingIds = pendingList.map((p) => (typeof p === "number" ? p : 0));
 
         const info: DebugInfo = {
           thread,
@@ -247,8 +223,6 @@ export class SlynkClient {
               description: typeof fl[1] === "string" ? fl[1] : print(fl[1] ?? []),
             };
           }),
-          pendingIds,
-          interactive: this.#interactiveId !== null && pendingIds.includes(this.#interactiveId),
         };
         this.debugStack.push(info);
         return;
@@ -307,7 +281,6 @@ export class SlynkClient {
         if (maxId >= 0) {
           const p = this.#pending.get(maxId)!;
           this.#pending.delete(maxId);
-          if (maxId === this.#interactiveId) this.#interactiveId = null;
           p.reject(new Error(`Slynk reader-error: ${reason}`));
         }
         return;

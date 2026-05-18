@@ -30,9 +30,8 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Evaluate Lisp",
       description: "Evaluate a Common Lisp expression in the running image. " +
-        "Returns the printed value plus any captured stdout. If the evaluation " +
-        "signals an error it suspends in the debugger — drive it with the " +
-        "lisp_debug_* tools.",
+        "Returns the printed value plus any captured stdout. Errors are " +
+        "auto-aborted from the debugger and surfaced in the result.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: z.string().optional().describe("Override the default package for this call"),
@@ -207,109 +206,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     "find-def",
     ({ symbol }) => session.findDefinition(symbol),
-  );
-
-  // ---- debugger ----
-
-  defTool(server, "lisp_debug_status", {
-    title: "Current debugger state",
-    description: "Report the active debugger condition, restart list, and top stack frames. " +
-      "Returns 'not in debugger' if no debug level is active.",
-    inputSchema: {},
-    annotations: READ_ONLY,
-  }, () => {
-    const d = session.currentDebug();
-    if (!d) return txt("not in debugger");
-    const restarts = d.restarts.map((r, i) => `${i}. ${r.name} — ${r.description}`).join("\n");
-    const frames = d.frames.map((f) => `#${f.index} ${f.description}`).join("\n");
-    return txt(
-      `level ${d.level} thread ${d.thread}\n` +
-        `condition: ${d.condition.type}: ${d.condition.message}\n\n` +
-        `restarts:\n${restarts}\n\nframes:\n${frames}`,
-    );
-  });
-
-  defAsyncTool(
-    server,
-    ctx,
-    "lisp_debug_invoke_restart",
-    {
-      title: "Invoke a restart",
-      description: "Invoke restart N (as listed by lisp_debug_status). If this " +
-        "resumes a suspended evaluation, reports its value; if it re-errors, " +
-        "reports the new debugger level.",
-      inputSchema: {
-        index: z.number().int().nonnegative().describe(
-          "Zero-based index into the restart list shown by lisp_debug_status",
-        ),
-      },
-      annotations: MUTATING,
-    },
-    "restart",
-    ({ index }) => session.debugInvokeRestart(index),
-  );
-
-  defAsyncTool(
-    server,
-    ctx,
-    "lisp_debug_abort",
-    {
-      title: "Abort to top level",
-      description: "Throw to the top-level restart, exiting all debugger levels.",
-      inputSchema: {},
-      annotations: MUTATING,
-    },
-    "abort",
-    () => session.debugAbort(),
-  );
-
-  defAsyncTool(
-    server,
-    ctx,
-    "lisp_debug_frame_locals",
-    {
-      title: "Frame locals",
-      description: "Local variables (and catch tags) for the given stack frame.",
-      inputSchema: {
-        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
-      },
-      annotations: READ_ONLY,
-    },
-    "frame-locals",
-    ({ frame }) => session.debugFrameLocals(frame),
-  );
-
-  defAsyncTool(
-    server,
-    ctx,
-    "lisp_debug_frame_source",
-    {
-      title: "Frame source location",
-      description: "Source location for the given stack frame.",
-      inputSchema: {
-        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
-      },
-      annotations: READ_ONLY,
-    },
-    "frame-source",
-    ({ frame }) => session.debugFrameSource(frame),
-  );
-
-  defAsyncTool(
-    server,
-    ctx,
-    "lisp_debug_eval_in_frame",
-    {
-      title: "Eval in frame",
-      description: "Evaluate an expression in the lexical environment of a stack frame.",
-      inputSchema: {
-        frame: z.number().int().nonnegative().describe("Zero-based stack frame index"),
-        code: z.string().describe("Lisp expression to evaluate in that frame's environment"),
-      },
-      annotations: MUTATING,
-    },
-    "frame-eval",
-    ({ frame, code }) => session.debugEvalInFrame(frame, code),
   );
 
   // ---- handles ----

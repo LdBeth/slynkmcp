@@ -14,8 +14,6 @@ import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
 import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
 import { asList, Keyword, print, type Sexp, str, Sym, sym, T, tagName } from "./slynk/sexp.ts";
-import { formatEvalResult } from "./mcp/tool_helpers.ts";
-
 export interface SessionOptions {
   host: string;
   port: number;
@@ -56,8 +54,6 @@ export interface EvalResult {
   value: string;
   /** Captured stdout / mREPL output during the call. */
   output: string;
-  /** True when the evaluation suspended in the debugger instead of returning. */
-  debugEntered?: boolean;
 }
 
 export class Session {
@@ -74,11 +70,6 @@ export class Session {
   #captureBuf: string[] | null = null;
   /** Mutex queue for output-capturing calls. */
   #queue: Promise<unknown> = Promise.resolve();
-  /** A parked interactive eval whose rex is suspended in the debugger. */
-  #suspendedEval: { rexPromise: Promise<Sexp>; buf: string[] } | null = null;
-  /** Set while eval / a resume is waiting for an interactive debugger to open. */
-  #debugEntered: PromiseWithResolvers<void> | null = null;
-
   constructor(opts: SessionOptions) {
     this.defaultPackage = opts.defaultPackage;
     this.#host = opts.host;
@@ -99,14 +90,8 @@ export class Session {
         // we surface eval status via the rex return value, not the channel.
       },
       onDebugActivate: (info) => {
-        if (info.interactive) {
-          // lisp_eval's debugger: leave it open for the model to drive;
-          // just wake whoever is waiting for the suspend signal.
-          this.#debugEntered?.resolve();
-          return;
-        }
-        // Auto-abort policy for every non-interactive tool: invoke the first
-        // ABORT-ish restart so the rex returns instead of wedging.
+        // Always auto-abort: invoke the first ABORT restart so the rex
+        // returns instead of wedging.
         const abortIdx = info.restarts.findIndex((r) => /^abort$/i.test(r.name));
         const idx = abortIdx >= 0 ? abortIdx : info.restarts.length - 1;
         if (idx >= 0) {
@@ -117,13 +102,10 @@ export class Session {
         }
       },
       onDisconnect: () => {
-        // Drop cached per-connection state; next tool call rebuilds via ensureConnected().
         this.mreplChannelId = null;
         this.mreplRemoteId = null;
         this.#connectGate.reset();
-        this.#suspendedEval = null;
         this.#captureBuf = null;
-        this.#debugEntered = null;
       },
     });
   }
@@ -210,10 +192,8 @@ export class Session {
 
   /**
    * Eval a string in the session's default package, capturing stdout.
-   *
-   * If the evaluation drops into the Slynk debugger, this resolves early with
-   * `debugEntered: true` and parks the rex; the `lisp_debug_*` tools then drive
-   * it. Calls are serialized so capture buffers never interleave.
+   * Errors are auto-aborted from the debugger and surfaced as rejections.
+   * Calls are serialized so capture buffers never interleave.
    */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
     await this.#ensureConnected();
@@ -225,46 +205,16 @@ export class Session {
   }
 
   async #evalOnce(code: string, pkg: string): Promise<EvalResult> {
-    if (this.#suspendedEval) {
-      const lvl = this.currentDebug()?.level ?? "?";
-      throw new Error(
-        `a previous evaluation is suspended in the debugger at level ${lvl} — ` +
-          `resolve it with the lisp_debug_* tools first`,
-      );
-    }
     const buf: string[] = [];
     this.#captureBuf = buf;
-    const rexPromise = this.#client.rex(
-      [sym("slynk:interactive-eval"), code],
-      { pkg, interactive: true },
-    );
-    rexPromise.catch(() => {}); // a parked rex may reject later via abort
-    const r = await this.#raceSuspend(rexPromise.then((v) => v as string));
-    if (!r.suspended) {
-      this.#captureBuf = null;
-      return { value: r.value, output: buf.join("") };
-    }
-    // Suspended: keep #captureBuf installed so post-resume output is captured.
-    this.#suspendedEval = { rexPromise, buf };
-    return { value: "", output: buf.join(""), debugEntered: true };
-  }
-
-  /**
-   * Race `work` against an interactive debugger opening. Resolves `suspended`
-   * if the debugger wins; otherwise yields `work`'s settled value.
-   */
-  async #raceSuspend<T>(
-    work: Promise<T>,
-  ): Promise<{ suspended: true } | { suspended: false; value: T }> {
-    const entered = Promise.withResolvers<void>();
-    this.#debugEntered = entered;
     try {
-      return await Promise.race([
-        work.then((value) => ({ suspended: false as const, value })),
-        entered.promise.then(() => ({ suspended: true as const })),
-      ]);
+      const value = await this.#client.rex(
+        [sym("slynk:interactive-eval"), code],
+        { pkg },
+      ) as string;
+      return { value, output: buf.join("") };
     } finally {
-      this.#debugEntered = null;
+      this.#captureBuf = null;
     }
   }
 
@@ -365,85 +315,6 @@ export class Session {
     return this.#rexStr([sym("slynk:inspector-reinspect")], {
       pkg: this.defaultPackage,
     });
-  }
-
-  // ---- Debugger ----
-
-  currentDebug() {
-    return this.#client.debugStack[this.#client.debugStack.length - 1] ?? null;
-  }
-
-  debugInvokeRestart(restartIndex: number): Promise<string> {
-    const top = this.currentDebug();
-    if (!top) throw new Error("Not in debugger");
-    return this.#resumeVia(
-      [sym("slynk:invoke-nth-restart-for-emacs"), top.level, restartIndex],
-      { thread: top.thread },
-    );
-  }
-
-  debugAbort(): Promise<string> {
-    const top = this.currentDebug();
-    if (!top) throw new Error("Not in debugger");
-    return this.#resumeVia([sym("slynk:throw-to-toplevel")], { thread: top.thread });
-  }
-
-  /**
-   * Send a restart / throw-to-toplevel form, then report the outcome of the
-   * suspended eval: its value+output if it ran to completion, an aborted
-   * notice if it unwound, or a re-entered-debugger notice if it errored again.
-   */
-  async #resumeVia(form: Sexp, opts: RexOptions): Promise<string> {
-    const susp = this.#suspendedEval;
-    const ack = this.#client.rex(form, opts);
-    ack.catch(() => {});
-    if (!susp) return print(await ack);
-
-    const settled = susp.rexPromise.then(
-      (v) => ({ kind: "value" as const, value: v as string }),
-      (e) => ({ kind: "abort" as const, message: (e as Error).message }),
-    );
-    const r = await this.#raceSuspend(settled);
-    if (r.suspended) {
-      // Still suspended at a fresh level; defAsyncTool's debugSummary shows it.
-      return "evaluation re-entered the debugger";
-    }
-    const outcome = r.value;
-    const output = susp.buf.join("");
-    this.#suspendedEval = null;
-    this.#captureBuf = null;
-    if (outcome.kind === "value") {
-      return formatEvalResult({ value: outcome.value, output });
-    }
-    return (output ? `[stdout]\n${output}\n` : "") +
-      `evaluation aborted: ${outcome.message}`;
-  }
-
-  debugFrameLocals(frameIndex: number): Promise<string> {
-    const top = this.currentDebug();
-    if (!top) throw new Error("Not in debugger");
-    return this.#rexStr(
-      [sym("slynk:frame-locals-and-catch-tags"), frameIndex],
-      { thread: top.thread },
-    );
-  }
-
-  debugFrameSource(frameIndex: number): Promise<string> {
-    const top = this.currentDebug();
-    if (!top) throw new Error("Not in debugger");
-    return this.#rexStr(
-      [sym("slynk:frame-source-location"), frameIndex],
-      { thread: top.thread },
-    );
-  }
-
-  debugEvalInFrame(frameIndex: number, code: string): Promise<string> {
-    const top = this.currentDebug();
-    if (!top) throw new Error("Not in debugger");
-    return this.#rexStr(
-      [sym("slynk:eval-string-in-frame"), code, frameIndex, this.defaultPackage],
-      { thread: top.thread },
-    );
   }
 
   /** Send :emacs-interrupt. No-op if not currently connected. */

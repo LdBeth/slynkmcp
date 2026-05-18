@@ -28,10 +28,7 @@ export async function runServer(config: Config): Promise<void> {
         `Introspection: 'lisp_completions', 'lisp_apropos', 'lisp_describe_symbol', ` +
         `'lisp_documentation', 'lisp_arglist', 'lisp_macroexpand', 'lisp_find_definition'. ` +
         `Code loading: 'lisp_compile_file' (compile-for-emacs), 'lisp_load_file' (LOAD). ` +
-        `Debugger: when eval errors, the condition + restarts are surfaced automatically; ` +
-        `use 'lisp_debug_status', 'lisp_debug_invoke_restart', 'lisp_debug_abort', ` +
-        `'lisp_debug_frame_locals', 'lisp_debug_frame_source', 'lisp_debug_eval_in_frame' ` +
-        `to inspect and recover. ` +
+        `Eval errors are auto-aborted from the debugger and surfaced in the result. ` +
         `Large results are truncated and stashed in handles; use 'lisp_get_handle' / ` +
         `'lisp_list_handles' to retrieve slices. 'lisp_interrupt' cancels a runaway computation. ` +
         `'lisp_connection_info' shows Lisp implementation, version, features, and package.` +

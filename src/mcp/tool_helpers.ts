@@ -2,8 +2,7 @@
  * Shared helpers used by core tool registration (`tools.ts`) and by plugins.
  *
  * Plugins should import `defAsyncTool`, `defTool`, the annotation presets, and
- * the `Ctx` type from here so they inherit handle truncation and debugger
- * summary appending.
+ * the `Ctx` type from here so they inherit handle truncation.
  *
  * Types come straight from the MCP SDK: `ToolAnnotations` and `CallToolResult`
  * from the protocol types, and `ZodRawShapeCompat` / `ShapeOutput` from the
@@ -66,11 +65,6 @@ export function err(text: string): CallToolResult {
 }
 
 export function formatEvalResult(r: EvalResult): string {
-  if (r.debugEntered) {
-    return (r.output ? `[stdout]\n${r.output}\n` : "") +
-      "evaluation suspended in the debugger — inspect with the lisp_debug_* " +
-      "tools, then resume with lisp_debug_invoke_restart or lisp_debug_abort";
-  }
   return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
 }
 
@@ -87,17 +81,6 @@ export function defTool<S extends ZodRawShapeCompat>(
   server.registerTool(name, config, handler);
 }
 
-function debugSummary(session: Session): string {
-  const d = session.currentDebug();
-  if (!d) return "";
-  const restarts = d.restarts.map((r, i) => `  ${i}. ${r.name} — ${r.description}`).join("\n");
-  const frames = d.frames.slice(0, 8).map((f) => `  #${f.index} ${f.description}`).join("\n");
-  return `\n\n[DEBUGGER ACTIVE — level ${d.level}]\n` +
-    `condition: ${d.condition.type}: ${d.condition.message}\n` +
-    `restarts:\n${restarts}\n` +
-    `top frames:\n${frames}`;
-}
-
 export function defAsyncTool<S extends ZodRawShapeCompat>(
   server: McpServer,
   ctx: Ctx,
@@ -109,9 +92,9 @@ export function defAsyncTool<S extends ZodRawShapeCompat>(
   defTool(server, name, config, async (args) => {
     try {
       const text = await op(args);
-      return txt(ctx.session.truncate(kind, text, ctx.maxResultChars) + debugSummary(ctx.session));
+      return txt(ctx.session.truncate(kind, text, ctx.maxResultChars));
     } catch (e) {
-      return err((e as Error).message + debugSummary(ctx.session));
+      return err((e as Error).message);
     }
   });
 }

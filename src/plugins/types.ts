@@ -8,7 +8,7 @@ import type { Ctx } from "../mcp/tool_helpers.ts";
  *
  * `register` is called once at startup, after the core tools are wired. It
  * receives the same `Ctx` used by core tools so plugin tools inherit handle
- * truncation and debugger-summary appending.
+ * truncation.
  */
 export interface Plugin {
   readonly name: string;
