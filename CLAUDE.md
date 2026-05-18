@@ -33,9 +33,16 @@ Core RPCs: `slynk:connection-info`, `slynk:interactive-eval`, `slynk:operator-ar
 (requires loading `slynk/apropos` contrib). mREPL: `slynk-mrepl:create-mrepl` creates a channel;
 eval still uses `slynk:interactive-eval` (mREPL has no `listener-eval` RPC).
 
-Debugger flow: Lisp error → `(:debug ...)` → `(:debug-activate ...)` triggers auto-abort via
-`slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart → `(:debug-return ...)` →
-`(:return (:abort REASON) ID)` rejects the original rex.
+Debugger flow: a Lisp error sends `(:debug ...)` then `(:debug-activate ...)`. Whether swankmcp
+auto-aborts depends on which request triggered it — decided by matching the `:debug` event's
+pending-continuation ids against the client's interactive rex id (`client.ts` `#interactiveId`). For
+`lisp_eval` (the only interactive request) the debugger is left open: `Session.eval` returns early
+with `debugEntered`, the rex is parked in `#suspendedEval`, and the `lisp_debug_*` tools drive it.
+`lisp_debug_invoke_restart` / `lisp_debug_abort` resume the parked rex and report its value, an
+aborted notice, or a re-entered-debugger notice. For every other tool, `(:debug-activate
+...)`
+triggers auto-abort via `slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart →
+`(:debug-return ...)` → `(:return (:abort REASON) ID)` rejects the rex.
 
 ## Tool registration types
 
