@@ -66,6 +66,11 @@ export function err(text: string): CallToolResult {
 }
 
 export function formatEvalResult(r: EvalResult): string {
+  if (r.debugEntered) {
+    return (r.output ? `[stdout]\n${r.output}\n` : "") +
+      "evaluation suspended in the debugger — inspect with the lisp_debug_* " +
+      "tools, then resume with lisp_debug_invoke_restart or lisp_debug_abort";
+  }
   return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
 }
 

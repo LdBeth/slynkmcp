@@ -30,7 +30,9 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Evaluate Lisp",
       description: "Evaluate a Common Lisp expression in the running image. " +
-        "Returns the printed value plus any captured stdout.",
+        "Returns the printed value plus any captured stdout. If the evaluation " +
+        "signals an error it suspends in the debugger — drive it with the " +
+        "lisp_debug_* tools.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: z.string().optional().describe("Override the default package for this call"),
@@ -233,7 +235,9 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     "lisp_debug_invoke_restart",
     {
       title: "Invoke a restart",
-      description: "Invoke restart N (as listed by lisp_debug_status).",
+      description: "Invoke restart N (as listed by lisp_debug_status). If this " +
+        "resumes a suspended evaluation, reports its value; if it re-errors, " +
+        "reports the new debugger level.",
       inputSchema: {
         index: z.number().int().nonnegative().describe(
           "Zero-based index into the restart list shown by lisp_debug_status",
