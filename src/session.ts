@@ -229,15 +229,15 @@ export class Session {
   // Convenience wrappers
   // -------------------------------------------------------------------
 
-  async compileFile(path: string, load = true): Promise<Sexp> {
-    return await this.#rex(
+  compileFile(path: string, load = true): Promise<Sexp> {
+    return this.#rex(
       [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
       { pkg: this.defaultPackage },
     );
   }
 
-  async loadFile(path: string): Promise<Sexp> {
-    return await this.#rex(
+  loadFile(path: string): Promise<Sexp> {
+    return this.#rex(
       [sym("slynk:load-file"), path],
       { pkg: this.defaultPackage },
     );
@@ -293,8 +293,8 @@ export class Session {
     return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
   }
 
-  async findDefinition(symbolName: string): Promise<Sexp> {
-    return await this.#rex(
+  findDefinition(symbolName: string): Promise<Sexp> {
+    return this.#rex(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
       { pkg: this.defaultPackage },
     );
@@ -302,25 +302,25 @@ export class Session {
 
   // ---- Inspector ----
 
-  async inspect(expression: string): Promise<Sexp> {
-    return await this.#rex(
+  inspect(expression: string): Promise<Sexp> {
+    return this.#rex(
       [sym("slynk:init-inspector"), expression],
       { pkg: this.defaultPackage },
     );
   }
-  async inspectorPart(index: number): Promise<Sexp> {
-    return await this.#rex(
+  inspectorPart(index: number): Promise<Sexp> {
+    return this.#rex(
       [sym("slynk:inspect-nth-part"), index],
       { pkg: this.defaultPackage },
     );
   }
-  async inspectorPop(): Promise<Sexp> {
-    return await this.#rex([sym("slynk:inspector-pop")], {
+  inspectorPop(): Promise<Sexp> {
+    return this.#rex([sym("slynk:inspector-pop")], {
       pkg: this.defaultPackage,
     });
   }
-  async inspectorReinspect(): Promise<Sexp> {
-    return await this.#rex([sym("slynk:inspector-reinspect")], {
+  inspectorReinspect(): Promise<Sexp> {
+    return this.#rex([sym("slynk:inspector-reinspect")], {
       pkg: this.defaultPackage,
     });
   }

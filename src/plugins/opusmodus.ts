@@ -79,7 +79,7 @@ export const opusmodusPlugin: Plugin = {
       "om_function_search",
       {
         title: "Search Opusmodus functions",
-        description: "Search Opusmodus's function metadata. Each Opusmodus function carries a " +
+        description: "Each Opusmodus function carries a " +
           "descriptor (category operation input output intent). Call with NO arguments to list " +
           "the valid symbol values for every property field. Call with one or more filters to " +
           "get the names of functions matching ALL supplied properties. Filter values must be " +

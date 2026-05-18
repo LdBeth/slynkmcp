@@ -30,24 +30,37 @@ export async function* readFrames(
   source: ReadableStream<Uint8Array>,
 ): AsyncGenerator<string> {
   const reader = source.getReader();
-  let buf = new Uint8Array(0);
+  let chunks: Uint8Array[] = [];
+  let totalLen = 0;
 
   const ensure = async (n: number): Promise<boolean> => {
-    while (buf.length < n) {
+    while (totalLen < n) {
       const { value, done } = await reader.read();
       if (done) return false;
-      const merged = new Uint8Array(buf.length + value.length);
-      merged.set(buf, 0);
-      merged.set(value, buf.length);
-      buf = merged;
+      chunks.push(value);
+      totalLen += value.length;
     }
     return true;
+  };
+
+  const flatten = (): Uint8Array => {
+    if (chunks.length === 1) return chunks[0];
+    const out = new Uint8Array(totalLen);
+    let off = 0;
+    for (const c of chunks) {
+      out.set(c, off);
+      off += c.length;
+    }
+    return out;
   };
 
   try {
     while (true) {
       if (!(await ensure(6))) return;
-      const headerStr = decoder.decode(buf.subarray(0, 6));
+      const flat = flatten();
+      chunks = [flat];
+      totalLen = flat.length;
+      const headerStr = decoder.decode(flat.subarray(0, 6));
       const len = Number.parseInt(headerStr, 16);
       if (!Number.isFinite(len) || len < 0) {
         throw new Error(`Invalid frame header: ${JSON.stringify(headerStr)}`);
@@ -55,8 +68,13 @@ export async function* readFrames(
       if (!(await ensure(6 + len))) {
         throw new Error("Stream ended mid-frame");
       }
-      const payload = decoder.decode(buf.subarray(6, 6 + len));
-      buf = buf.slice(6 + len);
+      // flatten() short-circuits when chunks.length === 1, so this is a no-op
+      // unless ensure() read more data above.
+      const full = flatten();
+      const payload = decoder.decode(full.subarray(6, 6 + len));
+      const remaining = full.slice(6 + len);
+      chunks = remaining.length > 0 ? [remaining] : [];
+      totalLen = remaining.length;
       yield payload;
     }
   } finally {

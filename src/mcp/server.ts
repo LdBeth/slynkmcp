@@ -10,16 +10,12 @@ export async function runServer(config: Config): Promise<void> {
   // Slynk socket.
   const plugins = loadPlugins(config.plugins);
 
-  const session = new Session({
-    host: config.host,
-    port: config.port,
-    defaultPackage: config.defaultPackage,
-  });
+  const session = new Session(config);
 
   // Slynk connection is opened lazily on the first tool call, so the MCP
   // server boots even when the Lisp image isn't running yet.
 
-  const pluginNote = plugins.length > 0 ? `${plugins.map((p) => p.instructions).join("")}` : "";
+  const pluginNote = plugins.map((p) => p.instructions).join("");
 
   const server = new McpServer(
     { name: "slynk-mcp-server", version: "0.1.0" },
