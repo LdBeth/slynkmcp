@@ -6,7 +6,13 @@
  *   SLYNK_TEST_PORT=4006 deno test --allow-net --allow-env --allow-read \
  *     --allow-write --config deno.json src/integration_test.ts
  */
-import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { Session } from "./session.ts";
 import { SlynkClient } from "./slynk/client.ts";
 import { sym } from "./slynk/sexp.ts";
@@ -97,6 +103,77 @@ Deno.test({
     } finally {
       await session.stop();
       await Deno.remove(file);
+    }
+  },
+});
+
+Deno.test({
+  name: "debugInvokeRestart: a CONTINUE restart resumes the suspended eval",
+  ignore,
+  fn: async () => {
+    const session = newSession();
+    try {
+      const r = await session.eval('(progn (cerror "go on" "stop here") 42)');
+      assertEquals(r.debugEntered, true);
+      const d = session.currentDebug()!;
+      const cont = d.restarts.findIndex((x) => /^continue$/i.test(x.name));
+      assert(cont >= 0, "expected a CONTINUE restart");
+      const out = await session.debugInvokeRestart(cont);
+      assertStringIncludes(out, "42");
+      assertEquals(session.currentDebug(), null);
+    } finally {
+      await session.stop();
+    }
+  },
+});
+
+Deno.test({
+  name: "debugAbort: reports the aborted evaluation",
+  ignore,
+  fn: async () => {
+    const session = newSession();
+    try {
+      await session.eval("(/ 1 0)");
+      const out = await session.debugAbort();
+      assertStringIncludes(out.toLowerCase(), "abort");
+      assertEquals(session.currentDebug(), null);
+    } finally {
+      await session.stop();
+    }
+  },
+});
+
+Deno.test({
+  name: "debugInvokeRestart: a re-erroring restart re-enters the debugger",
+  ignore,
+  fn: async () => {
+    const session = newSession();
+    try {
+      await session.eval("(/ 1 0)");
+      const d = session.currentDebug()!;
+      const retry = d.restarts.findIndex((x) => /^retry$/i.test(x.name));
+      assert(retry >= 0, "expected a RETRY restart");
+      const out = await session.debugInvokeRestart(retry);
+      assertStringIncludes(out, "debugger");
+      assertExists(session.currentDebug());
+      await session.debugAbort();
+    } finally {
+      await session.stop();
+    }
+  },
+});
+
+Deno.test({
+  name: "Session.eval: rejects a second eval while one is suspended",
+  ignore,
+  fn: async () => {
+    const session = newSession();
+    try {
+      await session.eval("(/ 1 0)");
+      await assertRejects(() => session.eval("(+ 1 1)"), Error, "suspended");
+      await session.debugAbort();
+    } finally {
+      await session.stop();
     }
   },
 });

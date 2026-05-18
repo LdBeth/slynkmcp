@@ -365,7 +365,7 @@ export class Session {
   debugInvokeRestart(restartIndex: number): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rexStr(
+    return this.#resumeVia(
       [sym("slynk:invoke-nth-restart-for-emacs"), top.level, restartIndex],
       { thread: top.thread },
     );
@@ -374,10 +374,50 @@ export class Session {
   debugAbort(): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rexStr(
-      [sym("slynk:throw-to-toplevel")],
-      { thread: top.thread },
-    );
+    return this.#resumeVia([sym("slynk:throw-to-toplevel")], { thread: top.thread });
+  }
+
+  /**
+   * Send a restart / throw-to-toplevel form, then report the outcome of the
+   * suspended eval: its value+output if it ran to completion, an aborted
+   * notice if it unwound, or a re-entered-debugger notice if it errored again.
+   */
+  async #resumeVia(form: Sexp, opts: RexOptions): Promise<string> {
+    const susp = this.#suspendedEval;
+    const ack = this.#client.rex(form, opts);
+    ack.catch(() => {});
+    if (!susp) return print(await ack);
+
+    const entered = deferred();
+    this.#debugEntered = entered;
+    let outcome:
+      | { kind: "value"; value: string }
+      | { kind: "abort"; message: string }
+      | { kind: "redebug" };
+    try {
+      outcome = await Promise.race([
+        susp.rexPromise.then(
+          (v) => ({ kind: "value" as const, value: v as string }),
+          (e) => ({ kind: "abort" as const, message: (e as Error).message }),
+        ),
+        entered.promise.then(() => ({ kind: "redebug" as const })),
+      ]);
+    } finally {
+      this.#debugEntered = null;
+    }
+
+    if (outcome.kind === "redebug") {
+      // Still suspended at a fresh level; defAsyncTool's debugSummary shows it.
+      return "evaluation re-entered the debugger";
+    }
+    const output = susp.buf.join("");
+    this.#suspendedEval = null;
+    this.#captureBuf = null;
+    if (outcome.kind === "value") {
+      return (output ? `[stdout]\n${output}\n[value]\n` : "") + outcome.value;
+    }
+    return (output ? `[stdout]\n${output}\n` : "") +
+      `evaluation aborted: ${outcome.message}`;
   }
 
   debugFrameLocals(frameIndex: number): Promise<string> {
