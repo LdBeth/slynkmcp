@@ -2,12 +2,26 @@
  * Shared helpers used by core tool registration (`tools.ts`) and by plugins.
  *
  * Plugins should import `defAsyncTool`, `defTool`, the annotation presets, and
- * the `Ctx` type from here so they inherit handle truncation, debugger summary
- * appending, and the Zod 4 / MCP SDK type workaround.
+ * the `Ctx` type from here so they inherit handle truncation and debugger
+ * summary appending.
+ *
+ * Types come straight from the MCP SDK: `ToolAnnotations` and `CallToolResult`
+ * from the protocol types, and `ZodRawShapeCompat` / `ShapeOutput` from the
+ * SDK's Zod-compat layer, which already bridges Zod 3 and Zod 4.
+ *
+ * `defTool` types the handler with a concrete `(args: ShapeOutput<S>) => …`
+ * signature rather than the SDK's `ToolCallback<S>`: `ToolCallback` is a
+ * deferred conditional type, and TS will not contextually infer arrow-function
+ * parameter types through one. The concrete signature gives callers typed
+ * `args` and is still assignable to what `registerTool` expects.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
+import type {
+  ShapeOutput,
+  ZodRawShapeCompat,
+} from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import type { EvalResult, Session } from "../session.ts";
 
 export interface Ctx {
@@ -15,21 +29,12 @@ export interface Ctx {
   maxResultChars: number;
 }
 
-export type TextContent = { type: "text"; text: string };
-export type ToolResult = { content: TextContent[]; isError?: boolean };
-export type ToolConfig<S> = {
+export type ToolConfig<S extends ZodRawShapeCompat> = {
   title: string;
   description: string;
   inputSchema: S;
   annotations: ToolAnnotations;
 };
-
-export interface ToolAnnotations {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-}
 
 export const READ_ONLY: ToolAnnotations = {
   readOnlyHint: true,
@@ -52,11 +57,11 @@ export const STATEFUL_READ: ToolAnnotations = {
   openWorldHint: true,
 };
 
-export function txt(text: string): ToolResult {
+export function txt(text: string): CallToolResult {
   return { content: [{ type: "text", text }] };
 }
 
-export function err(text: string): ToolResult {
+export function err(text: string): CallToolResult {
   return { content: [{ type: "text", text }], isError: true };
 }
 
@@ -64,11 +69,15 @@ export function formatEvalResult(r: EvalResult): string {
   return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
 }
 
-export function defTool<S extends z.ZodRawShape>(
+export type ToolHandler<S extends ZodRawShapeCompat> = (
+  args: ShapeOutput<S>,
+) => CallToolResult | Promise<CallToolResult>;
+
+export function defTool<S extends ZodRawShapeCompat>(
   server: McpServer,
   name: string,
   config: ToolConfig<S>,
-  handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
+  handler: ToolHandler<S>,
 ): void {
   server.registerTool(name, config, handler);
 }
@@ -84,13 +93,13 @@ function debugSummary(session: Session): string {
     `top frames:\n${frames}`;
 }
 
-export function defAsyncTool<S extends z.ZodRawShape>(
+export function defAsyncTool<S extends ZodRawShapeCompat>(
   server: McpServer,
   ctx: Ctx,
   name: string,
   config: ToolConfig<S>,
   kind: string,
-  op: (args: z.infer<z.ZodObject<S>>) => Promise<string>,
+  op: (args: ShapeOutput<S>) => Promise<string>,
 ): void {
   defTool(server, name, config, async (args) => {
     try {

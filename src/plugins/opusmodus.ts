@@ -7,15 +7,8 @@
  */
 
 import { z } from "zod";
-import {
-  defAsyncTool,
-  defTool,
-  err,
-  formatEvalResult,
-  READ_ONLY,
-  txt,
-} from "../mcp/tool_helpers.ts";
-import { NIL, print, read, type Sexp, sym } from "../slynk/sexp.ts";
+import { defAsyncTool, defTool, err, READ_ONLY } from "../mcp/tool_helpers.ts";
+import { kw, NIL, print, read, type Sexp, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
 export const opusmodusPlugin: Plugin = {
@@ -67,7 +60,8 @@ export const opusmodusPlugin: Plugin = {
             [sym("om:audition-musicxml-omn-snippet"), [sym("quote"), read(snippet)]],
           ];
           await session.rex(form);
-          return txt("done");
+          // Success is silent — audition is a side effect, there is no value.
+          return { content: [] };
         } catch (e) {
           return err((e as Error).message);
         }
@@ -88,7 +82,8 @@ export const opusmodusPlugin: Plugin = {
     }, async () => {
       try {
         await session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]]);
-        return txt("stopped");
+        // Success is silent — stopping is a side effect, there is no value.
+        return { content: [] };
       } catch (e) {
         return err((e as Error).message);
       }
@@ -117,17 +112,24 @@ export const opusmodusPlugin: Plugin = {
         },
         annotations: READ_ONLY,
       },
-      "eval",
+      "search",
       (args) => {
         const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
-        if (provided.length === 0) {
-          const form = `(list ${
-            PROPERTY_FIELDS.map((f) => `:${f} (om:function-property-values :${f})`).join(" ")
-          })`;
-          return session.eval(form).then(formatEvalResult);
-        }
-        const kwargs = provided.map((f) => `:${f} '${args[f]}`).join(" ");
-        return session.eval(`(om:function-search ${kwargs})`).then(formatEvalResult);
+        // Build the query as an s-expr and dispatch via rex — no string round-trip
+        // through interactive-eval, and no captured-output wrapper.
+        const form: Sexp = provided.length === 0
+          ? [
+            sym("cl:list"),
+            ...PROPERTY_FIELDS.flatMap((f) => [
+              kw(f),
+              [sym("om:function-property-values"), kw(f)],
+            ]),
+          ]
+          : [
+            sym("om:function-search"),
+            ...provided.flatMap((f) => [kw(f), [sym("quote"), sym(args[f] as string)]]),
+          ];
+        return session.rex(form).then(print);
       },
     );
   },

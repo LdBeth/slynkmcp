@@ -37,8 +37,11 @@ Debugger flow: Lisp error → `(:debug ...)` → `(:debug-activate ...)` trigger
 `slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart → `(:debug-return ...)` →
 `(:return (:abort REASON) ID)` rejects the original rex.
 
-## Zod 4 + MCP SDK type issue
+## Tool registration types
 
-The SDK's `registerTool` callback inference breaks with Zod 4 in Deno (TS7031). The workaround is
-`defTool<S extends z.ZodRawShape>()` in `tools.ts:34-42` which does its own
-`z.infer<z.ZodObject<S>>` for the handler args, then casts through `as any` to register.
+`defTool`/`defAsyncTool` in `src/mcp/tool_helpers.ts` wrap `server.registerTool` using the SDK's own
+types: `ZodRawShapeCompat`/`ShapeOutput` from `@modelcontextprotocol/sdk/server/zod-compat.js` (the
+SDK's Zod 3/4 bridge) and `ToolAnnotations`/`CallToolResult` from the protocol types. The handler is
+typed `(args: ShapeOutput<S>) => CallToolResult | Promise<CallToolResult>` — a concrete signature,
+not the SDK's `ToolCallback<S>`, because `ToolCallback` is a deferred conditional type and TS will
+not contextually infer arrow-parameter types through one (TS7031).

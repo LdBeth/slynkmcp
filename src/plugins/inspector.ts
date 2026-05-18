@@ -7,7 +7,6 @@
  */
 
 import { z } from "zod";
-import { print } from "../slynk/sexp.ts";
 import { defAsyncTool, STATEFUL_READ } from "../mcp/tool_helpers.ts";
 import type { Plugin } from "./types.ts";
 
