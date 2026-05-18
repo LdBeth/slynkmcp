@@ -55,6 +55,8 @@ export interface EvalResult {
   value: string;
   /** Captured stdout / mREPL output during the call. */
   output: string;
+  /** True when the evaluation suspended in the debugger instead of returning. */
+  debugEntered?: boolean;
 }
 
 export class Session {
@@ -71,6 +73,10 @@ export class Session {
   #captureBuf: string[] | null = null;
   /** Mutex queue for output-capturing calls. */
   #queue: Promise<unknown> = Promise.resolve();
+  /** A parked interactive eval whose rex is suspended in the debugger. */
+  #suspendedEval: { rexPromise: Promise<Sexp>; buf: string[] } | null = null;
+  /** Set while eval / a resume is waiting for an interactive debugger to open. */
+  #debugEntered: Deferred | null = null;
 
   constructor(opts: SessionOptions) {
     this.defaultPackage = opts.defaultPackage;
@@ -92,8 +98,14 @@ export class Session {
         // we surface eval status via the rex return value, not the channel.
       },
       onDebugActivate: (info) => {
-        // Auto-abort policy: invoke the first ABORT-ish restart so the rex
-        // returns instead of leaving Claude wedged in a debugger it can't drive.
+        if (info.interactive) {
+          // lisp_eval's debugger: leave it open for the model to drive;
+          // just wake whoever is waiting for the suspend signal.
+          this.#debugEntered?.fire();
+          return;
+        }
+        // Auto-abort policy for every non-interactive tool: invoke the first
+        // ABORT-ish restart so the rex returns instead of wedging.
         const abortIdx = info.restarts.findIndex((r) => /^abort$/i.test(r.name));
         const idx = abortIdx >= 0 ? abortIdx : info.restarts.length - 1;
         if (idx >= 0) {
@@ -108,6 +120,9 @@ export class Session {
         this.mreplChannelId = null;
         this.mreplRemoteId = null;
         this.#connectGate.reset();
+        this.#suspendedEval = null;
+        this.#captureBuf = null;
+        this.#debugEntered = null;
       },
     });
   }
@@ -192,34 +207,54 @@ export class Session {
     return this.#rex(form, opts).then(print);
   }
 
-  /** Run an async block while capturing all incoming write-string output. */
-  private withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
-    const run = async () => {
-      const buf: string[] = [];
-      this.#captureBuf = buf;
-      try {
-        const result = await fn();
-        return { result, output: buf.join("") };
-      } finally {
-        this.#captureBuf = null;
-      }
-    };
-    const next = this.#queue.then(run, run);
-    this.#queue = next.catch(() => {});
-    return next as Promise<{ result: T; output: string }>;
-  }
-
-  /** Eval a string in the session's default package, capturing stdout. */
+  /**
+   * Eval a string in the session's default package, capturing stdout.
+   *
+   * If the evaluation drops into the Slynk debugger, this resolves early with
+   * `debugEntered: true` and parks the rex; the `lisp_debug_*` tools then drive
+   * it. Calls are serialized so capture buffers never interleave.
+   */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
     await this.#ensureConnected();
     const p = pkg ?? this.defaultPackage;
-    const { result, output } = await this.withCapture(() =>
-      this.#client.rex(
-        [sym("slynk:interactive-eval"), code],
-        { pkg: p },
-      )
+    const run = () => this.#evalOnce(code, p);
+    const next = this.#queue.then(run, run);
+    this.#queue = next.catch(() => {});
+    return next;
+  }
+
+  async #evalOnce(code: string, pkg: string): Promise<EvalResult> {
+    if (this.#suspendedEval) {
+      const lvl = this.currentDebug()?.level ?? "?";
+      throw new Error(
+        `a previous evaluation is suspended in the debugger at level ${lvl} — ` +
+          `resolve it with the lisp_debug_* tools first`,
+      );
+    }
+    const buf: string[] = [];
+    this.#captureBuf = buf;
+    const rexPromise = this.#client.rex(
+      [sym("slynk:interactive-eval"), code],
+      { pkg, interactive: true },
     );
-    return { value: result as string, output };
+    rexPromise.catch(() => {}); // a parked rex may reject later via abort
+    const entered = deferred();
+    this.#debugEntered = entered;
+    try {
+      const winner = await Promise.race([
+        rexPromise.then((v) => ({ debug: false as const, value: v as string })),
+        entered.promise.then(() => ({ debug: true as const, value: "" })),
+      ]);
+      if (!winner.debug) {
+        this.#captureBuf = null;
+        return { value: winner.value, output: buf.join("") };
+      }
+      // Suspended: keep #captureBuf installed so post-resume output is captured.
+      this.#suspendedEval = { rexPromise, buf };
+      return { value: "", output: buf.join(""), debugEntered: true };
+    } finally {
+      this.#debugEntered = null;
+    }
   }
 
   // -------------------------------------------------------------------
@@ -419,4 +454,18 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     version: str(plistGet("version") ?? [], ""),
     raw: info,
   };
+}
+
+interface Deferred {
+  promise: Promise<void>;
+  fire: () => void;
+}
+
+/** A one-shot promise whose resolution is triggered externally. */
+function deferred(): Deferred {
+  let fire!: () => void;
+  const promise = new Promise<void>((res) => {
+    fire = res;
+  });
+  return { promise, fire };
 }
