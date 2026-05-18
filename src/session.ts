@@ -41,7 +41,7 @@ export class SlynkUnreachableError extends Error {
 
 export interface ConnectionInfo {
   pid: number;
-  lispImplementation: { type: string; name: string; version: string };
+  lisp: { type: string; name: string; version: string };
   machine: { instance: string; type: string };
   features: string[];
   packageName: string;
@@ -190,9 +190,8 @@ export class Session {
   }
 
   /** `#rex` + `show` — most RPCs return a displayable string. */
-  async #rexStr(form: Sexp, opts: RexOptions = {}): Promise<string> {
-    const r = await this.#rex(form, opts);
-    return show(r);
+  #rexStr(form: Sexp, opts: RexOptions = {}): Promise<string> {
+    return this.#rex(form, opts).then(show);
   }
 
   /** Run an async block while capturing all incoming write-string output. */
@@ -253,8 +252,8 @@ export class Session {
     return (result[0] as Sexp[]).filter((x): x is string => typeof x === "string");
   }
 
-  async apropos(pattern: string, externalOnly = true): Promise<string> {
-    const result = await this.#rex(
+  apropos(pattern: string, externalOnly = true): Promise<string> {
+    return this.#rex(
       [
         sym("slynk-apropos:apropos-list-for-emacs"),
         pattern,
@@ -263,8 +262,7 @@ export class Session {
         [],
       ],
       { pkg: this.defaultPackage },
-    );
-    return print(result);
+    ).then(print);
   }
 
   describe(symbolName: string): Promise<string> {
@@ -411,7 +409,7 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
 
   return {
     pid: typeof pid === "number" ? pid : 0,
-    lispImplementation: {
+    lisp: {
       type: plistStr(lispImpl, "type"),
       name: plistStr(lispImpl, "name"),
       version: plistStr(lispImpl, "version"),
