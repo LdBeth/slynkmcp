@@ -17,6 +17,12 @@ export interface Ctx {
 
 export type TextContent = { type: "text"; text: string };
 export type ToolResult = { content: TextContent[]; isError?: boolean };
+export type ToolConfig<S> = {
+  title: string;
+  description: string;
+  inputSchema: S;
+  annotations: ToolAnnotations;
+};
 
 export interface ToolAnnotations {
   readOnlyHint?: boolean;
@@ -61,12 +67,7 @@ export function formatEvalResult(r: EvalResult): string {
 export function defTool<S extends z.ZodRawShape>(
   server: McpServer,
   name: string,
-  config: {
-    title?: string;
-    description: string;
-    inputSchema: S;
-    annotations?: ToolAnnotations;
-  },
+  config: ToolConfig<S>,
   handler: (args: z.infer<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
 ): void {
   server.registerTool(name, config, handler);
@@ -87,12 +88,7 @@ export function defAsyncTool<S extends z.ZodRawShape>(
   server: McpServer,
   ctx: Ctx,
   name: string,
-  config: {
-    title?: string;
-    description: string;
-    inputSchema: S;
-    annotations?: ToolAnnotations;
-  },
+  config: ToolConfig<S>,
   kind: string,
   op: (args: z.infer<z.ZodObject<S>>) => Promise<string>,
 ): void {

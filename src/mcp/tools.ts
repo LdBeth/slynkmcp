@@ -372,7 +372,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     "connection-info",
-    ({ }) =>
+    () =>
       session.getConnectionInfo().then((ci) =>
         `pid: ${ci.pid}\n` +
         `lisp: ${ci.lisp.name} ${ci.lisp.version} ` +
