@@ -1,0 +1,61 @@
+/**
+ * Integration tests against a live SBCL Slynk. Gated on SLYNK_TEST_PORT so
+ * plain `deno test` and CI skip them. To run:
+ *
+ *   sbcl --non-interactive --load scripts/start-test-slynk.lisp &
+ *   SLYNK_TEST_PORT=4006 deno test --allow-net --allow-env --allow-read \
+ *     --allow-write --config deno.json src/integration_test.ts
+ */
+import { assertEquals, assertStringIncludes } from "@std/assert";
+import { SlynkClient } from "./slynk/client.ts";
+import { sym } from "./slynk/sexp.ts";
+
+const PORT_ENV = Deno.env.get("SLYNK_TEST_PORT");
+const PORT = PORT_ENV ? Number(PORT_ENV) : 0;
+const ignore = PORT_ENV === undefined;
+const HOST = "127.0.0.1";
+
+Deno.test({
+  name: "SlynkClient: interactive flag marks the originating debugger",
+  ignore,
+  fn: async () => {
+    const client = new SlynkClient({ onDebugActivate: () => {} });
+    await client.connect(HOST, PORT);
+    try {
+      await client.rex([sym("slynk:connection-info")]);
+      const marked = client.rex(
+        [sym("slynk:interactive-eval"), "(/ 1 0)"],
+        { pkg: "CL-USER", interactive: true },
+      );
+      marked.catch(() => {});
+      const plain = client.rex(
+        [sym("slynk:interactive-eval"), '(error "plain")'],
+        { pkg: "CL-USER" },
+      );
+      plain.catch(() => {});
+      for (let i = 0; i < 150 && client.debugStack.length < 2; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assertEquals(client.debugStack.length, 2);
+      assertEquals(client.debugStack.filter((d) => d.interactive).length, 1);
+      assertEquals(client.debugStack.filter((d) => !d.interactive).length, 1);
+      const interactiveDbg = client.debugStack.find((d) => d.interactive)!;
+      assertStringIncludes(interactiveDbg.condition.message, "DIVISION-BY-ZERO");
+      // clean up: abort debug levels innermost-first (reverse order)
+      for (const d of [...client.debugStack].reverse()) {
+        const idx = d.restarts.findIndex((r) => /^abort$/i.test(r.name));
+        client.rex(
+          [sym("slynk:invoke-nth-restart-for-emacs"), d.level, idx],
+          { thread: d.thread },
+        ).catch(() => {});
+      }
+      await Promise.allSettled([marked, plain]);
+      for (let i = 0; i < 150 && client.debugStack.length > 0; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assertEquals(client.debugStack.length, 0);
+    } finally {
+      await client.close();
+    }
+  },
+});
