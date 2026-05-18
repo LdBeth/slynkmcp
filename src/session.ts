@@ -219,7 +219,7 @@ export class Session {
         { pkg: p },
       )
     );
-    return { value: print(result), output };
+    return { value: result as string, output };
   }
 
   // -------------------------------------------------------------------
@@ -264,36 +264,36 @@ export class Session {
   }
 
   describe(symbolName: string): Promise<string> {
-    return this.#rexStr(
+    return this.#rex(
       [sym("slynk:describe-symbol"), symbolName],
       { pkg: this.defaultPackage },
-    );
+    ) as Promise<string>;
   }
 
   documentation(symbolName: string): Promise<string> {
-    return this.#rexStr(
+    return this.#rex(
       [sym("slynk:documentation-symbol"), symbolName],
       { pkg: this.defaultPackage },
-    );
+    ) as Promise<string>;
   }
 
   arglist(symbolName: string): Promise<string> {
-    return this.#rexStr(
+    return this.#rex(
       [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
       { pkg: this.defaultPackage },
-    );
+    ) as Promise<string>;
   }
 
   macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
+    return this.#rex([sym(op), form], { pkg: this.defaultPackage }) as Promise<string>;
   }
 
   findDefinition(symbolName: string): Promise<string> {
-    return this.#rexStr(
+    return this.#rex(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
       { pkg: this.defaultPackage },
-    );
+    ) as Promise<string>;
   }
 
   // ---- Inspector ----

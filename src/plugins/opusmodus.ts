@@ -8,8 +8,26 @@
 
 import { z } from "zod";
 import { defAsyncTool, defTool, err, READ_ONLY } from "../mcp/tool_helpers.ts";
-import { kw, NIL, print, read, type Sexp, sym } from "../slynk/sexp.ts";
+import { Cons, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
+
+/**
+ * Walk a result s-expr and strip the package prefix from every symbol name,
+ * leaving only the local part (`opusmodus:filter` → `filter`,
+ * `common-lisp::sort` → `sort`). Slynk prints symbols qualified relative to
+ * the rex thread's `*package*`, so `om:function-search` results arrive full of
+ * `opusmodus:`/`common-lisp:` noise the model does not need. Keywords are left
+ * intact — they are the plist field names (`:category`, `:output`, …).
+ */
+function stripPackages(s: Sexp): Sexp {
+  if (s instanceof Sym) {
+    const i = s.name.lastIndexOf(":");
+    return i >= 0 ? sym(s.name.slice(i + 1)) : s;
+  }
+  if (s instanceof Cons) return new Cons(stripPackages(s.car), stripPackages(s.cdr));
+  if (Array.isArray(s)) return s.map(stripPackages);
+  return s;
+}
 
 export const opusmodusPlugin: Plugin = {
   name: "opusmodus",
@@ -127,9 +145,14 @@ export const opusmodusPlugin: Plugin = {
           ]
           : [
             sym("om:function-search"),
-            ...provided.flatMap((f) => [kw(f), [sym("quote"), sym(args[f] as string)]]),
+            // Qualify filter values into the `om` package explicitly. The
+            // descriptor values returned by `om:function-property-values` are
+            // `om`-package symbols; sending a bare symbol would intern it in
+            // whatever `session.defaultPackage` happens to be, so it would not
+            // be `eq` to the stored values and the search would match nothing.
+            ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
           ];
-        return session.rex(form).then(print);
+        return session.rex(form).then((r) => print(stripPackages(r)));
       },
     );
   },
