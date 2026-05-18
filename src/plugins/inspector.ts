@@ -31,7 +31,7 @@ export const inspectorPlugin: Plugin = {
         annotations: STATEFUL_READ,
       },
       "inspect",
-      ({ expression }) => session.inspect(expression).then(print),
+      ({ expression }) => session.inspect(expression),
     );
 
     defAsyncTool(
@@ -49,7 +49,7 @@ export const inspectorPlugin: Plugin = {
         annotations: STATEFUL_READ,
       },
       "inspect",
-      ({ index }) => session.inspectorPart(index).then(print),
+      ({ index }) => session.inspectorPart(index),
     );
 
     defAsyncTool(
@@ -63,7 +63,7 @@ export const inspectorPlugin: Plugin = {
         annotations: STATEFUL_READ,
       },
       "inspect",
-      () => session.inspectorPop().then(print),
+      () => session.inspectorPop(),
     );
 
     defAsyncTool(
@@ -77,7 +77,7 @@ export const inspectorPlugin: Plugin = {
         annotations: STATEFUL_READ,
       },
       "inspect",
-      () => session.inspectorReinspect().then(print),
+      () => session.inspectorReinspect(),
     );
   },
 };

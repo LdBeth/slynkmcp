@@ -57,11 +57,6 @@ export interface EvalResult {
   output: string;
 }
 
-/** Coerce a Sexp to a string, using `print` for non-strings. */
-function show(r: Sexp): string {
-  return typeof r === "string" ? r : print(r);
-}
-
 export class Session {
   #client: SlynkClient;
   private mreplChannelId: number | null = null;
@@ -137,8 +132,8 @@ export class Session {
    * reset so a later call can retry. Subsequent calls are no-ops while the
    * connection is alive.
    */
-  async ensureConnected(): Promise<void> {
-    await this.#connectGate.run(() => this.#bootstrap());
+  async #ensureConnected(): Promise<void> {
+    await this.getConnectionInfo();
   }
 
   /** Resolve cached connection info, connecting on demand. */
@@ -185,17 +180,20 @@ export class Session {
 
   /** Connect (if needed) then dispatch an rex. */
   async #rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
-    await this.ensureConnected();
+    await this.#ensureConnected();
     return this.#client.rex(form, opts);
   }
 
-  /** `#rex` + `show` — most RPCs return a displayable string. */
+  public rex(form: Sexp) {
+    return this.#rex(form, { pkg: this.defaultPackage });
+  }
+
   #rexStr(form: Sexp, opts: RexOptions = {}): Promise<string> {
-    return this.#rex(form, opts).then(show);
+    return this.#rex(form, opts).then(print);
   }
 
   /** Run an async block while capturing all incoming write-string output. */
-  withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
+  private withCapture<T>(fn: () => Promise<T>): Promise<{ result: T; output: string }> {
     const run = async () => {
       const buf: string[] = [];
       this.#captureBuf = buf;
@@ -213,7 +211,7 @@ export class Session {
 
   /** Eval a string in the session's default package, capturing stdout. */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
-    await this.ensureConnected();
+    await this.#ensureConnected();
     const p = pkg ?? this.defaultPackage;
     const { result, output } = await this.withCapture(() =>
       this.#client.rex(
@@ -221,22 +219,22 @@ export class Session {
         { pkg: p },
       )
     );
-    return { value: show(result), output };
+    return { value: print(result), output };
   }
 
   // -------------------------------------------------------------------
   // Convenience wrappers
   // -------------------------------------------------------------------
 
-  compileFile(path: string, load = true): Promise<Sexp> {
-    return this.#rex(
+  compileFile(path: string, load = true): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
       { pkg: this.defaultPackage },
     );
   }
 
-  loadFile(path: string): Promise<Sexp> {
-    return this.#rex(
+  loadFile(path: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:load-file"), path],
       { pkg: this.defaultPackage },
     );
@@ -253,7 +251,7 @@ export class Session {
   }
 
   apropos(pattern: string, externalOnly = true): Promise<string> {
-    return this.#rex(
+    return this.#rexStr(
       [
         sym("slynk-apropos:apropos-list-for-emacs"),
         pattern,
@@ -262,7 +260,7 @@ export class Session {
         [],
       ],
       { pkg: this.defaultPackage },
-    ).then(print);
+    );
   }
 
   describe(symbolName: string): Promise<string> {
@@ -291,8 +289,8 @@ export class Session {
     return this.#rexStr([sym(op), form], { pkg: this.defaultPackage });
   }
 
-  findDefinition(symbolName: string): Promise<Sexp> {
-    return this.#rex(
+  findDefinition(symbolName: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
       { pkg: this.defaultPackage },
     );
@@ -300,25 +298,25 @@ export class Session {
 
   // ---- Inspector ----
 
-  inspect(expression: string): Promise<Sexp> {
-    return this.#rex(
+  inspect(expression: string): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:init-inspector"), expression],
       { pkg: this.defaultPackage },
     );
   }
-  inspectorPart(index: number): Promise<Sexp> {
-    return this.#rex(
+  inspectorPart(index: number): Promise<string> {
+    return this.#rexStr(
       [sym("slynk:inspect-nth-part"), index],
       { pkg: this.defaultPackage },
     );
   }
-  inspectorPop(): Promise<Sexp> {
-    return this.#rex([sym("slynk:inspector-pop")], {
+  inspectorPop(): Promise<string> {
+    return this.#rexStr([sym("slynk:inspector-pop")], {
       pkg: this.defaultPackage,
     });
   }
-  inspectorReinspect(): Promise<Sexp> {
-    return this.#rex([sym("slynk:inspector-reinspect")], {
+  inspectorReinspect(): Promise<string> {
+    return this.#rexStr([sym("slynk:inspector-reinspect")], {
       pkg: this.defaultPackage,
     });
   }
@@ -329,37 +327,37 @@ export class Session {
     return this.#client.debugStack[this.#client.debugStack.length - 1] ?? null;
   }
 
-  debugInvokeRestart(restartIndex: number): Promise<Sexp> {
+  debugInvokeRestart(restartIndex: number): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rex(
+    return this.#rexStr(
       [sym("slynk:invoke-nth-restart-for-emacs"), top.level, restartIndex],
       { thread: top.thread },
     );
   }
 
-  debugAbort(): Promise<Sexp> {
+  debugAbort(): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rex(
+    return this.#rexStr(
       [sym("slynk:throw-to-toplevel")],
       { thread: top.thread },
     );
   }
 
-  debugFrameLocals(frameIndex: number): Promise<Sexp> {
+  debugFrameLocals(frameIndex: number): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rex(
+    return this.#rexStr(
       [sym("slynk:frame-locals-and-catch-tags"), frameIndex],
       { thread: top.thread },
     );
   }
 
-  debugFrameSource(frameIndex: number): Promise<Sexp> {
+  debugFrameSource(frameIndex: number): Promise<string> {
     const top = this.currentDebug();
     if (!top) throw new Error("Not in debugger");
-    return this.#rex(
+    return this.#rexStr(
       [sym("slynk:frame-source-location"), frameIndex],
       { thread: top.thread },
     );

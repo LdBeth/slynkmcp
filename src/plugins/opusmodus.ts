@@ -15,6 +15,7 @@ import {
   READ_ONLY,
   txt,
 } from "../mcp/tool_helpers.ts";
+import { NIL, print, read, type Sexp, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
 export const opusmodusPlugin: Plugin = {
@@ -24,9 +25,18 @@ export const opusmodusPlugin: Plugin = {
   register(server, ctx) {
     const { session } = ctx;
 
-    defAsyncTool(
+    // Every Slynk eval flows through this one Session, so overriding `eval`
+    // here wraps the core `lisp_eval` tool plus this plugin's own tools. The
+    // (let ((*do-verbose* nil)) ...) binding silences Opusmodus's verbose
+    // progress output so it does not pollute MCP results.
+    const baseEval = session.eval.bind(
+      session,
+    ) as ((code: Sexp, pkg?: string) => ReturnType<typeof session.eval>);
+    session.eval = (code: string, pkg) =>
+      baseEval([sym("cl:let"), [[sym("om::*do-verbose*"), NIL]], code], pkg);
+
+    defTool(
       server,
-      ctx,
       "om_audition_snippet",
       {
         title: "Audition OMN snippet",
@@ -46,9 +56,22 @@ export const opusmodusPlugin: Plugin = {
           openWorldHint: true,
         },
       },
-      "eval",
-      ({ snippet }) =>
-        session.eval(`(om:audition-musicxml-omn-snippet '${snippet})`).then(formatEvalResult),
+      async ({ snippet }) => {
+        // rex evaluates the form directly, bypassing the `session.eval` verbose
+        // wrapper above — so re-apply the (om::*do-verbose* nil) binding here.
+        // The snippet is parsed into an s-expr and quoted as the call argument.
+        try {
+          const form: Sexp = [
+            sym("cl:let"),
+            [[sym("om::*do-verbose*"), NIL]],
+            [sym("om:audition-musicxml-omn-snippet"), [sym("quote"), read(snippet)]],
+          ];
+          await session.rex(form);
+          return txt("done");
+        } catch (e) {
+          return err((e as Error).message);
+        }
+      },
     );
 
     defTool(server, "om_stop", {
@@ -64,7 +87,7 @@ export const opusmodusPlugin: Plugin = {
       },
     }, async () => {
       try {
-        await session.eval("(progn (om:stop-midi) (om:stop-sound))");
+        await session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]]);
         return txt("stopped");
       } catch (e) {
         return err((e as Error).message);

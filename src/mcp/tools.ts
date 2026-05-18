@@ -58,7 +58,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     "compile",
-    ({ path, load }) => session.compileFile(path, load).then(print),
+    ({ path, load }) => session.compileFile(path, load),
   );
 
   defAsyncTool(
@@ -74,7 +74,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     "load",
-    ({ path }) => session.loadFile(path).then(print),
+    ({ path }) => session.loadFile(path),
   );
 
   defTool(server, "lisp_interrupt", {
@@ -205,7 +205,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     "find-def",
-    ({ symbol }) => session.findDefinition(symbol).then(print),
+    ({ symbol }) => session.findDefinition(symbol),
   );
 
   // ---- debugger ----
@@ -243,7 +243,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     "restart",
-    ({ index }) => session.debugInvokeRestart(index).then(print),
+    ({ index }) => session.debugInvokeRestart(index),
   );
 
   defAsyncTool(
@@ -257,7 +257,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     "abort",
-    () => session.debugAbort().then(print),
+    () => session.debugAbort(),
   );
 
   defAsyncTool(
@@ -273,7 +273,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     "frame-locals",
-    ({ frame }) => session.debugFrameLocals(frame).then(print),
+    ({ frame }) => session.debugFrameLocals(frame),
   );
 
   defAsyncTool(
@@ -289,7 +289,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     "frame-source",
-    ({ frame }) => session.debugFrameSource(frame).then(print),
+    ({ frame }) => session.debugFrameSource(frame),
   );
 
   defAsyncTool(

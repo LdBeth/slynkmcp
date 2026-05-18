@@ -26,6 +26,10 @@ export class Cons {
   constructor(public readonly car: Sexp, public readonly cdr: Sexp) {}
 }
 
+export class Lit {
+  constructor(public readonly content: string) {}
+}
+
 export type Sexp =
   | number
   | bigint
