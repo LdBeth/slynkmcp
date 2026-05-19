@@ -246,8 +246,8 @@ export class Session {
     return (result[0] as Sexp[]).filter((x): x is string => typeof x === "string");
   }
 
-  apropos(pattern: string, externalOnly = true): Promise<string> {
-    return this.#rexStr(
+  aproposRaw(pattern: string, externalOnly = true): Promise<Sexp> {
+    return this.#rex(
       [
         sym("slynk-apropos:apropos-list-for-emacs"),
         pattern,
@@ -257,6 +257,10 @@ export class Session {
       ],
       { pkg: this.defaultPackage },
     );
+  }
+
+  apropos(pattern: string, externalOnly = true): Promise<string> {
+    return this.aproposRaw(pattern, externalOnly).then(print);
   }
 
   describe(symbolName: string): Promise<string> {

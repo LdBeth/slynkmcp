@@ -7,6 +7,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import {
   asyncHandler,
+  asyncStructuredHandler,
   type Ctx,
   err,
   formatEvalResult,
@@ -14,8 +15,69 @@ import {
   READ_ONLY,
   txt,
 } from "./tool_helpers.ts";
+import { asList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
 
 export type { Ctx };
+
+interface AproposItem {
+  symbol: string;
+  package: string;
+  external: boolean;
+  type: string;
+  documentation: string;
+  arglist?: string;
+  bounds?: { start: number; end: number };
+}
+
+function parseAproposResult(raw: Sexp): AproposItem[] {
+  const items = asList(raw, "apropos result");
+  return items.map((item) => {
+    const plist = asList(item, "apropos entry");
+    const result: AproposItem = {
+      symbol: "",
+      package: "",
+      external: false,
+      type: "unknown",
+      documentation: "",
+    };
+    for (let i = 0; i < plist.length - 1; i += 2) {
+      const key = plist[i];
+      if (!(key instanceof Keyword)) continue;
+      const val = plist[i + 1];
+      switch (key.name) {
+        case "designator": {
+          const d = asList(val, "designator");
+          result.symbol = typeof d[0] === "string" ? d[0] : print(d[0]);
+          result.package = typeof d[1] === "string" ? d[1] : print(d[1]);
+          result.external = d[2] === true || (d[2] instanceof Sym && d[2].name === "t");
+          break;
+        }
+        case "arglist":
+          result.arglist = typeof val === "string" ? val : print(val);
+          break;
+        case "bounds": {
+          const b = asList(val, "bounds");
+          if (Array.isArray(b[0]) && typeof b[0][0] === "number" && typeof b[0][1] === "number") {
+            result.bounds = { start: b[0][0], end: b[0][1] };
+          }
+          break;
+        }
+        case "function":
+        case "variable":
+        case "class":
+        case "macro":
+          result.type = key.name;
+          result.documentation = typeof val === "string"
+            ? val
+            : val instanceof Keyword && val.name === "not-documented"
+            ? ""
+            : print(val);
+          break;
+      }
+    }
+    return result;
+  });
+}
 
 export function registerTools(server: McpServer, ctx: Ctx): void {
   const { session } = ctx;
@@ -33,12 +95,20 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
         code: z.string().describe("Lisp source to evaluate"),
         package: z.string().optional().describe("Override the default package for this call"),
       },
+      outputSchema: {
+        value: z.string().describe("Return value"),
+        print: z.string().describe("Captured stdout"),
+      },
       annotations: MUTATING,
     },
-    asyncHandler(
+    asyncStructuredHandler(
       ctx,
       "eval",
-      ({ code, package: pkg }) => session.eval(code, pkg).then(formatEvalResult),
+      ({ code, package: pkg }) =>
+        session.eval(code, pkg).then((r) => ({
+          text: formatEvalResult(r),
+          structured: { value: r.value, print: r.output },
+        })),
     ),
   );
 
@@ -112,12 +182,30 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
           "Restrict to external (exported) symbols only (default true)",
         ),
       },
+      outputSchema: {
+        results: z.array(z.object({
+          symbol: z.string(),
+          package: z.string(),
+          external: z.boolean(),
+          type: z.string(),
+          documentation: z.string(),
+          arglist: z.string().optional(),
+          bounds: z.object({ start: z.number(), end: z.number() }).optional(),
+        })),
+      },
       annotations: READ_ONLY,
     },
-    asyncHandler(
+    asyncStructuredHandler(
       ctx,
       "apropos",
-      ({ pattern, externalOnly }) => session.apropos(pattern, externalOnly),
+      ({ pattern, externalOnly }) =>
+        session.aproposRaw(pattern, externalOnly).then((raw) => {
+          const results = parseAproposResult(raw);
+          return {
+            text: print(raw),
+            structured: { results },
+          };
+        }),
     ),
   );
 

@@ -75,3 +75,27 @@ export function asyncHandler<A>(
     }
   };
 }
+
+/**
+ * Like {@link asyncHandler} but `op` returns both a human-readable `text` and a
+ * `structured` object that is sent as `structuredContent` in the tool result.
+ * When an `outputSchema` is set on the tool, clients can consume the structured
+ * data directly instead of parsing the text.
+ */
+export function asyncStructuredHandler<A>(
+  ctx: Ctx,
+  kind: string,
+  op: (args: A) => Promise<{ text: string; structured: Record<string, unknown> }>,
+): (args: A) => Promise<CallToolResult> {
+  return async (args) => {
+    try {
+      const { text, structured } = await op(args);
+      return {
+        content: [{ type: "text", text: ctx.session.truncate(kind, text, ctx.maxResultChars) }],
+        structuredContent: structured,
+      };
+    } catch (e) {
+      return err((e as Error).message);
+    }
+  };
+}
