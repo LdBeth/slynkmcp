@@ -46,9 +46,12 @@ triggers auto-abort via `slynk:invoke-nth-restart-for-emacs` targeting the `ABOR
 
 ## Tool registration types
 
-`defTool`/`defAsyncTool` in `src/mcp/tool_helpers.ts` wrap `server.registerTool` using the SDK's own
-types: `ZodRawShapeCompat`/`ShapeOutput` from `@modelcontextprotocol/sdk/server/zod-compat.js` (the
-SDK's Zod 3/4 bridge) and `ToolAnnotations`/`CallToolResult` from the protocol types. The handler is
-typed `(args: ShapeOutput<S>) => CallToolResult | Promise<CallToolResult>` — a concrete signature,
-not the SDK's `ToolCallback<S>`, because `ToolCallback` is a deferred conditional type and TS will
-not contextually infer arrow-parameter types through one (TS7031).
+Register async tools by calling `server.registerTool(name, config, asyncHandler(ctx, kind, op))`
+directly (see `src/mcp/tools.ts` and plugins). `asyncHandler` (`src/mcp/tool_helpers.ts`) wraps an
+`op: (args) => Promise<string>` with handle truncation and error→`isError` conversion.
+`asyncHandler<A>` is generic over the *resolved* args object type, not the raw Zod shape, so it
+sidesteps the SDK's deferred `ToolCallback` conditional: the literal `config` at each call site
+pins the input shape, TS resolves the conditional, and `op` gets typed `args` — no casts.
+
+**Import the SDK without `.js`** — `@modelcontextprotocol/sdk/server/mcp`, not `…/mcp.js`. The
+`.js` path resolves `McpServer` to `any`, silently disabling all `registerTool` typechecking.

@@ -7,7 +7,8 @@
  */
 
 import { z } from "zod";
-import { defAsyncTool, defTool, err, READ_ONLY } from "../mcp/tool_helpers.ts";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
+import { asyncHandler, err, READ_ONLY } from "../mcp/tool_helpers.ts";
 import { Cons, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
@@ -33,11 +34,10 @@ export const opusmodusPlugin: Plugin = {
   name: "opusmodus",
   instructions: `Opusmodus: 'om_audition_snippet', 'om_stop' plays/stop omn snippet, ` +
     `'om_function_search' search functions. `,
-  register(server, ctx) {
+  register(server: McpServer, ctx) {
     const { session } = ctx;
 
-    defTool(
-      server,
+    server.registerTool(
       "om_audition_snippet",
       {
         title: "Audition OMN snippet",
@@ -76,7 +76,7 @@ export const opusmodusPlugin: Plugin = {
       },
     );
 
-    defTool(server, "om_stop", {
+    server.registerTool("om_stop", {
       title: "Stop Opusmodus audition",
       description: "Stop any currently playing Opusmodus audition. " +
         "Idempotent — safe to call when nothing is playing.",
@@ -99,9 +99,7 @@ export const opusmodusPlugin: Plugin = {
 
     const PROPERTY_FIELDS = ["category", "operation", "input", "output", "intent"] as const;
 
-    defAsyncTool(
-      server,
-      ctx,
+    server.registerTool(
       "om_function_search",
       {
         title: "Search Opusmodus functions",
@@ -120,8 +118,7 @@ export const opusmodusPlugin: Plugin = {
         },
         annotations: READ_ONLY,
       },
-      "search",
-      (args) => {
+      asyncHandler(ctx, "search", (args) => {
         const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
         // Build the query as an s-expr and dispatch via rex — no string round-trip
         // through interactive-eval, and no captured-output wrapper.
@@ -143,7 +140,7 @@ export const opusmodusPlugin: Plugin = {
             ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
           ];
         return session.rex(form).then((r) => print(stripPackages(r)));
-      },
+      }),
     );
   },
 };

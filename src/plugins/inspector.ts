@@ -7,7 +7,7 @@
  */
 
 import { z } from "zod";
-import { defAsyncTool, STATEFUL_READ } from "../mcp/tool_helpers.ts";
+import { asyncHandler, STATEFUL_READ } from "../mcp/tool_helpers.ts";
 import type { Plugin } from "./types.ts";
 
 export const inspectorPlugin: Plugin = {
@@ -17,9 +17,7 @@ export const inspectorPlugin: Plugin = {
   register(server, ctx) {
     const { session } = ctx;
 
-    defAsyncTool(
-      server,
-      ctx,
+    server.registerTool(
       "lisp_inspect",
       {
         title: "Inspect an expression",
@@ -29,13 +27,10 @@ export const inspectorPlugin: Plugin = {
         },
         annotations: STATEFUL_READ,
       },
-      "inspect",
-      ({ expression }) => session.inspect(expression),
+      asyncHandler(ctx, "inspect", ({ expression }) => session.inspect(expression)),
     );
 
-    defAsyncTool(
-      server,
-      ctx,
+    server.registerTool(
       "lisp_inspect_part",
       {
         title: "Inspect a part",
@@ -47,13 +42,10 @@ export const inspectorPlugin: Plugin = {
         },
         annotations: STATEFUL_READ,
       },
-      "inspect",
-      ({ index }) => session.inspectorPart(index),
+      asyncHandler(ctx, "inspect", ({ index }) => session.inspectorPart(index)),
     );
 
-    defAsyncTool(
-      server,
-      ctx,
+    server.registerTool(
       "lisp_inspector_pop",
       {
         title: "Pop inspector",
@@ -61,13 +53,10 @@ export const inspectorPlugin: Plugin = {
         inputSchema: {},
         annotations: STATEFUL_READ,
       },
-      "inspect",
-      () => session.inspectorPop(),
+      asyncHandler(ctx, "inspect", () => session.inspectorPop()),
     );
 
-    defAsyncTool(
-      server,
-      ctx,
+    server.registerTool(
       "lisp_inspector_reinspect",
       {
         title: "Reinspect current",
@@ -75,8 +64,7 @@ export const inspectorPlugin: Plugin = {
         inputSchema: {},
         annotations: STATEFUL_READ,
       },
-      "inspect",
-      () => session.inspectorReinspect(),
+      asyncHandler(ctx, "inspect", () => session.inspectorReinspect()),
     );
   },
 };

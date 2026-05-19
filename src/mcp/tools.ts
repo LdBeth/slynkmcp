@@ -3,12 +3,11 @@
  * delegates to the Session for actual Slynk RPC.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { z } from "zod";
 import {
+  asyncHandler,
   type Ctx,
-  defAsyncTool,
-  defTool,
   err,
   formatEvalResult,
   MUTATING,
@@ -23,9 +22,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- core eval ----
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_eval",
     {
       title: "Evaluate Lisp",
@@ -38,13 +35,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: MUTATING,
     },
-    "eval",
-    ({ code, package: pkg }) => session.eval(code, pkg).then(formatEvalResult),
+    asyncHandler(
+      ctx,
+      "eval",
+      ({ code, package: pkg }) => session.eval(code, pkg).then(formatEvalResult),
+    ),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_compile_file",
     {
       title: "Compile a Lisp file",
@@ -57,13 +55,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: MUTATING,
     },
-    "compile",
-    ({ path, load }) => session.compileFile(path, load),
+    asyncHandler(ctx, "compile", ({ path, load }) => session.compileFile(path, load)),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_load_file",
     {
       title: "Load a Lisp file",
@@ -73,11 +68,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: MUTATING,
     },
-    "load",
-    ({ path }) => session.loadFile(path),
+    asyncHandler(ctx, "load", ({ path }) => session.loadFile(path)),
   );
 
-  defTool(server, "lisp_interrupt", {
+  server.registerTool("lisp_interrupt", {
     title: "Interrupt running computation",
     description: "Send :emacs-interrupt to the REPL thread.",
     inputSchema: {},
@@ -89,9 +83,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- introspection ----
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_completions",
     {
       title: "Symbol completions",
@@ -102,13 +94,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "completions",
-    ({ prefix, package: pkg }) => (session.completions(prefix, pkg)).then((s) => s.join("\n")),
+    asyncHandler(
+      ctx,
+      "completions",
+      ({ prefix, package: pkg }) => session.completions(prefix, pkg).then((s) => s.join("\n")),
+    ),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_apropos",
     {
       title: "Apropos search",
@@ -121,13 +114,14 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "apropos",
-    ({ pattern, externalOnly }) => session.apropos(pattern, externalOnly),
+    asyncHandler(
+      ctx,
+      "apropos",
+      ({ pattern, externalOnly }) => session.apropos(pattern, externalOnly),
+    ),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_describe_symbol",
     {
       title: "Describe a symbol",
@@ -137,13 +131,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "describe",
-    ({ symbol }) => session.describe(symbol),
+    asyncHandler(ctx, "describe", ({ symbol }) => session.describe(symbol)),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_documentation",
     {
       title: "Symbol docstring",
@@ -153,13 +144,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "doc",
-    ({ symbol }) => session.documentation(symbol),
+    asyncHandler(ctx, "doc", ({ symbol }) => session.documentation(symbol)),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_arglist",
     {
       title: "Operator arglist",
@@ -169,13 +157,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "arglist",
-    ({ symbol }) => session.arglist(symbol),
+    asyncHandler(ctx, "arglist", ({ symbol }) => session.arglist(symbol)),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_macroexpand",
     {
       title: "Macro-expand a form",
@@ -188,13 +173,10 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "macroexpand",
-    ({ form, all }) => session.macroexpand(form, all),
+    asyncHandler(ctx, "macroexpand", ({ form, all }) => session.macroexpand(form, all)),
   );
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_find_definition",
     {
       title: "Find symbol definition",
@@ -204,13 +186,12 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       annotations: READ_ONLY,
     },
-    "find-def",
-    ({ symbol }) => session.findDefinition(symbol),
+    asyncHandler(ctx, "find-def", ({ symbol }) => session.findDefinition(symbol)),
   );
 
   // ---- handles ----
 
-  defTool(server, "lisp_get_handle", {
+  server.registerTool("lisp_get_handle", {
     title: "Fetch a stored handle",
     description:
       "Retrieve previously-stored large result by handle id (returned in '…[truncated … in handle hX]' messages).",
@@ -233,7 +214,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     return txt(slice + tail);
   });
 
-  defTool(server, "lisp_list_handles", {
+  server.registerTool("lisp_list_handles", {
     title: "List active handles",
     description: "Show ids and metadata for all stored handles.",
     inputSchema: {},
@@ -247,7 +228,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
 
   // ---- session info ----
 
-  defTool(server, "lisp_set_package", {
+  server.registerTool("lisp_set_package", {
     title: "Set current package",
     description: "Set the default package used by eval, completions, and all other tools. " +
       "Equivalent to CL:IN-PACKAGE but handled client-side — no RPC is sent.",
@@ -260,9 +241,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     return txt(`default package set to ${pkg}`);
   });
 
-  defAsyncTool(
-    server,
-    ctx,
+  server.registerTool(
     "lisp_connection_info",
     {
       title: "Slynk connection info",
@@ -270,18 +249,21 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       inputSchema: {},
       annotations: READ_ONLY,
     },
-    "connection-info",
-    () =>
-      session.getConnectionInfo().then((ci) =>
-        `pid: ${ci.pid}\n` +
-        `lisp: ${ci.lisp.name} ${ci.lisp.version} ` +
-        `(${ci.lisp.type})\n` +
-        `machine: ${ci.machine.instance} (${ci.machine.type})\n` +
-        `package: ${session.defaultPackage} (initial: ${ci.packageName}, prompt: ${ci.prompt})\n` +
-        `slynk version: ${ci.version}\n` +
-        `features (${ci.features.length}): ${ci.features.slice(0, 30).join(" ")}${
-          ci.features.length > 30 ? " …" : ""
-        }`
-      ),
+    asyncHandler(
+      ctx,
+      "connection-info",
+      () =>
+        session.getConnectionInfo().then((ci) =>
+          `pid: ${ci.pid}\n` +
+          `lisp: ${ci.lisp.name} ${ci.lisp.version} ` +
+          `(${ci.lisp.type})\n` +
+          `machine: ${ci.machine.instance} (${ci.machine.type})\n` +
+          `package: ${session.defaultPackage} (initial: ${ci.packageName}, prompt: ${ci.prompt})\n` +
+          `slynk version: ${ci.version}\n` +
+          `features (${ci.features.length}): ${ci.features.slice(0, 30).join(" ")}${
+            ci.features.length > 30 ? " …" : ""
+          }`
+        ),
+    ),
   );
 }
