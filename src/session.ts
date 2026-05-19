@@ -13,7 +13,7 @@
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
 import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
-import { asList, Keyword, print, type Sexp, str, Sym, sym, T, tagName } from "./slynk/sexp.ts";
+import { asList, Keyword, print, type Sexp, str, sym, T, tagName } from "./slynk/sexp.ts";
 export interface SessionOptions {
   host: string;
   port: number;
@@ -328,7 +328,7 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
   // Slynk returns a property list: (:pid N :lisp-implementation (...) ...)
   const plist = asList(info, "connection-info");
 
-  function plistGet(k: string): Sexp {
+  function plistGet(plist: Sexp[], k: string): Sexp {
     for (let i = 0; i < plist.length - 1; i += 2) {
       const key = plist[i];
       if (key instanceof Keyword && key.name === k) return plist[i + 1];
@@ -336,19 +336,16 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     return [];
   }
 
-  function plistStr(subplist: Sexp[], k: string): string {
-    for (let i = 0; i < subplist.length - 1; i += 2) {
-      const key = subplist[i];
-      if (key instanceof Keyword && key.name === k) return str(subplist[i + 1] ?? []);
-    }
-    return "";
+  // plistStr = str ∘ plistGet  (equational derivation: identical loop, different return wrapper)
+  function plistStr(plist: Sexp[], k: string): string {
+    return str(plistGet(plist, k));
   }
 
-  const lispImpl = asList(plistGet("lisp-implementation"), "lisp-implementation");
-  const machine = asList(plistGet("machine"), "machine");
-  const features = asList(plistGet("features"), "features");
-  const pkgInfo = asList(plistGet("package"), "package");
-  const pid = plistGet("pid");
+  const lispImpl = asList(plistGet(plist, "lisp-implementation"), "lisp-implementation");
+  const machine = asList(plistGet(plist, "machine"), "machine");
+  const features = asList(plistGet(plist, "features"), "features");
+  const pkgInfo = asList(plistGet(plist, "package"), "package");
+  const pid = plistGet(plist, "pid");
 
   return {
     pid: typeof pid === "number" ? pid : 0,
@@ -358,10 +355,10 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
       version: plistStr(lispImpl, "version"),
     },
     machine: { instance: plistStr(machine, "instance"), type: plistStr(machine, "type") },
-    features: features.map((f) => f instanceof Sym ? f.name : (f as Keyword)?.name ?? print(f)),
+    features: features.map((f) => tagName(f) ?? print(f)),
     packageName: plistStr(pkgInfo, "name"),
     prompt: plistStr(pkgInfo, "prompt"),
-    version: str(plistGet("version") ?? [], ""),
+    version: str(plistGet(plist, "version"), ""),
     raw: info,
   };
 }

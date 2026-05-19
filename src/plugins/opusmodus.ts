@@ -8,8 +8,8 @@
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
-import { asyncHandler, err, READ_ONLY } from "../mcp/tool_helpers.ts";
-import { Cons, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
+import { err, READ_ONLY } from "../mcp/tool_helpers.ts";
+import { asList, Cons, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
 /**
@@ -28,6 +28,40 @@ function stripPackages(s: Sexp): Sexp {
   if (s instanceof Cons) return new Cons(stripPackages(s.car), stripPackages(s.cdr));
   if (Array.isArray(s)) return s.map(stripPackages);
   return s;
+}
+
+/** Return the local name of a symbol, stripping the package prefix if present. */
+function localName(s: Sexp): string {
+  if (s instanceof Sym) {
+    const i = s.name.lastIndexOf(":");
+    return i >= 0 ? s.name.slice(i + 1) : s.name;
+  }
+  return print(s);
+}
+
+/**
+ * Parse the raw Sexp result from `om:function-search` (or the property-values
+ * listing) into a structured object suitable for `structuredContent`.
+ *
+ * No-arg mode returns a plist like `(:category (sym…) :operation (sym…) …)`;
+ * filter mode returns a flat list of function-name symbols.
+ */
+function parseSearchResult(
+  r: Sexp,
+  fields: readonly string[],
+): { properties: Record<string, string[]> } | { functions: string[] } {
+  const arr = asList(r, "function-search result");
+  if (arr.length > 0 && arr[0] instanceof Keyword) {
+    const properties: Record<string, string[]> = {};
+    for (let i = 0; i < arr.length - 1; i += 2) {
+      const key = arr[i];
+      if (key instanceof Keyword && (fields as readonly string[]).includes(key.name)) {
+        properties[key.name] = asList(arr[i + 1], key.name).map(localName);
+      }
+    }
+    return { properties };
+  }
+  return { functions: arr.map(localName) };
 }
 
 export const opusmodusPlugin: Plugin = {
@@ -116,12 +150,26 @@ export const opusmodusPlugin: Plugin = {
           output: z.string().optional().describe("Output type"),
           intent: z.string().optional().describe("Conceptual intent"),
         },
+        outputSchema: {
+          properties: z.object({
+            category: z.array(z.string()),
+            operation: z.array(z.string()),
+            input: z.array(z.string()),
+            output: z.array(z.string()),
+            intent: z.array(z.string()),
+          }).optional().describe(
+            "Map of property field names to their valid symbol values " +
+              "(returned when called with no arguments)",
+          ),
+          functions: z.array(z.string()).optional().describe(
+            "Matching function names (returned when filters are provided)",
+          ),
+        },
         annotations: READ_ONLY,
       },
-      asyncHandler(ctx, "search", (args) => {
+      async ({ category, operation, input, output, intent }) => {
+        const args = { category, operation, input, output, intent };
         const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
-        // Build the query as an s-expr and dispatch via rex — no string round-trip
-        // through interactive-eval, and no captured-output wrapper.
         const form: Sexp = provided.length === 0
           ? [
             sym("cl:list"),
@@ -132,15 +180,20 @@ export const opusmodusPlugin: Plugin = {
           ]
           : [
             sym("om:function-search"),
-            // Qualify filter values into the `om` package explicitly. The
-            // descriptor values returned by `om:function-property-values` are
-            // `om`-package symbols; sending a bare symbol would intern it in
-            // whatever `session.defaultPackage` happens to be, so it would not
-            // be `eq` to the stored values and the search would match nothing.
             ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
           ];
-        return session.rex(form).then((r) => print(stripPackages(r)));
-      }),
+        try {
+          const raw = await session.rex(form);
+          const structured = parseSearchResult(raw, PROPERTY_FIELDS);
+          const text = print(stripPackages(raw));
+          return {
+            content: [{ type: "text" as const, text: ctx.session.truncate("search", text, ctx.maxResultChars) }],
+            structuredContent: structured as Record<string, unknown>,
+          };
+        } catch (e) {
+          return err((e as Error).message);
+        }
+      },
     );
   },
 };
