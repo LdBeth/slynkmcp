@@ -10,10 +10,8 @@ Claude Code  ──stdio MCP──▶  swankmcp (Deno)  ──TCP──▶  Slyn
 
 A single long-lived TCP connection to Slynk multiplexes all MCP tool calls; the connection and a
 dedicated mREPL channel are opened lazily on the first tool call (see Lifecycle below). Per-request
-stdout is captured via the mREPL channel. When an error from `lisp_eval` drops into the Slynk
-debugger the call suspends rather than failing: the tool result describes the condition, restarts,
-and frames, and the `lisp_debug_*` tools let the model query frames, eval in frames, and invoke a
-restart (or abort). Errors from every other tool are auto-aborted and surfaced as MCP tool errors.
+stdout is captured via the mREPL channel. Lisp errors are auto-aborted on the Slynk side and
+surfaced as MCP tool errors with the condition text.
 
 ## Lifecycle
 
@@ -70,20 +68,6 @@ All tools are prefixed `lisp_` to avoid name collisions with other MCP servers.
 | `lisp_arglist`         | Argument list for a function or macro.                                                |
 | `lisp_macroexpand`     | `macroexpand-1` a form (or full expansion with `all: true`).                          |
 | `lisp_find_definition` | Source locations for a symbol's definitions.                                          |
-
-### Debugger
-
-A `lisp_eval` error suspends in the debugger; these tools inspect and resume it. (Errors from other
-tools are auto-aborted, so `lisp_debug_status` reports "not in debugger" for those.)
-
-| Tool                        | Description                                                                                |
-| --------------------------- | ------------------------------------------------------------------------------------------ |
-| `lisp_debug_status`         | Report the active condition, restarts, and top frames. Returns "not in debugger" if clean. |
-| `lisp_debug_invoke_restart` | Invoke restart N; reports the resumed evaluation's value, or the new debugger level.       |
-| `lisp_debug_abort`          | Throw to top-level, exiting all debugger levels.                                           |
-| `lisp_debug_frame_locals`   | Local variables (and catch tags) for a given stack frame.                                  |
-| `lisp_debug_frame_source`   | Source location for a given stack frame.                                                   |
-| `lisp_debug_eval_in_frame`  | Evaluate an expression in the lexical environment of a stack frame.                        |
 
 ### Handles
 

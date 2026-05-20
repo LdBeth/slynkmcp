@@ -1,5 +1,5 @@
-import { assertEquals, assertThrows } from "@std/assert";
-import { loadPlugins } from "./registry.ts";
+import { assert, assertEquals, assertThrows } from "@std/assert";
+import { loadPlugins, PLUGINS } from "./registry.ts";
 import type { Plugin } from "./types.ts";
 
 const fakeA: Plugin = { name: "a", instructions: "no", register: () => {} };
@@ -31,6 +31,11 @@ Deno.test("loadPlugins - throws on unknown name with known names listed", () => 
   }
 });
 
-Deno.test("loadPlugins - default registry exported and non-empty after OM plugin lands", () => {
+Deno.test("loadPlugins - default registry has the in-tree plugins", () => {
+  assert("opusmodus" in PLUGINS, "opusmodus plugin should be registered by default");
+  assert("inspector" in PLUGINS, "inspector plugin should be registered by default");
+});
+
+Deno.test("loadPlugins - empty input against default registry yields empty output", () => {
   assertEquals(loadPlugins([]), []);
 });

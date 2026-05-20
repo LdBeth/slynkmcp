@@ -13,7 +13,7 @@ import type { Plugin } from "./types.ts";
 export const inspectorPlugin: Plugin = {
   name: "inspector",
   instructions: `Inspector: 'lisp_inspect' an object, 'lisp_inspect_part', 'lisp_inspector_pop', ` +
-    `'lisp_inspector_reinspect'. `,
+    `'lisp_inspector_reinspect'.`,
   register(server, ctx) {
     const { session } = ctx;
 

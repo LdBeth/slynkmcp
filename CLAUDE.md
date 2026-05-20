@@ -8,10 +8,11 @@ Session owns the client and offers a high-level API (`eval`, `arglist`, `apropos
 debugger). MCP tool handlers (`src/mcp/tools.ts`) are thin wrappers that call Session methods and
 format the result.
 
-Output capture (`session.ts:117-131`) serializes eval calls through a mutex queue so asynchronous
-`:write-string` events from Slynk can be buffered into a per-request `#captureBuf`. When the rex
-resolves, the buffer is joined as the `output` field. This is needed because Slynk doesn't tie
-stdout to request ids.
+Output capture: every Session-level rex is serialized through `#queue` (`session.ts` `#runQueued`),
+so only one rex is in flight at a time. `eval()` sets `#captureBuf` for the duration of its rex
+call; non-eval rexes never set the buffer, so async `:write-string` events from Slynk can't be
+misattributed across calls. The buffer is joined as the `output` field when the eval rex resolves.
+This is needed because Slynk doesn't tie stdout to request ids.
 
 Large results (>8000 chars by default) are truncated and stashed in a 64-entry LRU `HandleStore`;
 the model retrieves slices via the `get_handle` tool.
@@ -33,16 +34,18 @@ Core RPCs: `slynk:connection-info`, `slynk:interactive-eval`, `slynk:operator-ar
 (requires loading `slynk/apropos` contrib). mREPL: `slynk-mrepl:create-mrepl` creates a channel;
 eval still uses `slynk:interactive-eval` (mREPL has no `listener-eval` RPC).
 
-Debugger flow: a Lisp error sends `(:debug ...)` then `(:debug-activate ...)`. Whether swankmcp
-auto-aborts depends on which request triggered it — decided by matching the `:debug` event's
-pending-continuation ids against the client's interactive rex id (`client.ts` `#interactiveId`). For
-`lisp_eval` (the only interactive request) the debugger is left open: `Session.eval` returns early
-with `debugEntered`, the rex is parked in `#suspendedEval`, and the `lisp_debug_*` tools drive it.
-`lisp_debug_invoke_restart` / `lisp_debug_abort` resume the parked rex and report its value, an
-aborted notice, or a re-entered-debugger notice. For every other tool, `(:debug-activate
-...)`
-triggers auto-abort via `slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart →
-`(:debug-return ...)` → `(:return (:abort REASON) ID)` rejects the rex.
+Debugger flow: a Lisp error sends `(:debug ...)` then `(:debug-activate ...)`. swankmcp currently
+auto-aborts every debugger entry, regardless of which tool triggered it. On `(:debug-activate ...)`
+the client invokes `slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart (falling back
+to the last restart by index if no `ABORT` is present) → `(:debug-return ...)` →
+`(:return (:abort
+REASON) ID)` rejects the rex, and the tool result surfaces the condition text.
+
+An interactive-debugger plugin (parking the `lisp_eval` rex and exposing `lisp_debug_*` tools to
+drive restarts / frames / eval-in-frame) is an intentional extension point but is **not yet
+implemented**. If you add it: discriminate eval-vs-other requests via the `:debug` event's
+pending-continuation ids (currently dropped at `client.ts` — the `PENDING-IDS` field of the event
+needs to be parsed and surfaced), and keep the auto-abort path as the default for non-eval tools.
 
 ## Tool registration types
 

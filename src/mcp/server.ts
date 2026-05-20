@@ -15,7 +15,9 @@ export async function runServer(config: Config): Promise<void> {
   // Slynk connection is opened lazily on the first tool call, so the MCP
   // server boots even when the Lisp image isn't running yet.
 
-  const pluginNote = plugins.map((p) => p.instructions).join("");
+  const pluginNote = plugins.length > 0
+    ? "\n\n" + plugins.map((p) => p.instructions).join("\n\n")
+    : "";
 
   const server = new McpServer(
     { name: "slynk-mcp-server", version: "0.1.0" },

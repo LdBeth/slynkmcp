@@ -2,9 +2,10 @@
  * Minimal s-expression reader/printer for the Slynk wire protocol.
  *
  * Supports: symbols (optionally package-qualified), keywords, strings, integers,
- * floats, ratios (read as string), characters (read as string), lists, dotted
- * pairs, quote sugar, t / nil. Comments and reader macros beyond `'` are not
- * supported because Slynk doesn't emit them on the wire.
+ * floats, ratios (read as string), lists, dotted pairs, quote sugar, t / nil.
+ * `#<...>` (unreadable object) and `#\<name>` (character) are preserved as
+ * opaque `Lit` tokens that round-trip on `print`. Other `#`-dispatch macros are
+ * consumed as best-effort opaque tokens. Comments are skipped.
  */
 
 export class Sym {
@@ -26,8 +27,12 @@ export class Cons {
   constructor(public readonly car: Sexp, public readonly cdr: Sexp) {}
 }
 
+/** Opaque token preserved verbatim from the wire (e.g. `#<FUNCTION FOO>`). */
 export class Lit {
   constructor(public readonly content: string) {}
+  toString(): string {
+    return this.content;
+  }
 }
 
 export type Sexp =
@@ -39,6 +44,7 @@ export type Sexp =
   | Sym
   | Keyword
   | Cons
+  | Lit
   | Sexp[];
 
 export const NIL: Sexp[] = [];
@@ -94,7 +100,46 @@ class Reader {
       return [sym("quote"), this.readSexp()];
     }
     if (c === ")") throw new Error(`Unexpected ')' at ${this.pos}`);
+    if (c === "#") return this.readSharp();
     return this.readAtom();
+  }
+
+  /**
+   * Handle `#`-dispatch macros. Slynk doesn't emit these often (most
+   * unreadables arrive wrapped in strings), but inspector/describe output
+   * occasionally contains a bare `#<…>` or `#\<name>`. We preserve them as
+   * `Lit` tokens so the frame parses and round-trips.
+   */
+  readSharp(): Sexp {
+    this.pos++; // consume #
+    if (this.eof()) throw new Error("Unexpected EOF after #");
+    const c = this.next();
+    if (c === "<") {
+      // #<...>: opaque object representation. Scan to matching '>'. Slynk
+      // doesn't nest these; a flat scan is sufficient.
+      let body = "#<";
+      while (!this.eof()) {
+        const ch = this.next();
+        body += ch;
+        if (ch === ">") return new Lit(body);
+      }
+      throw new Error("Unterminated #< form");
+    }
+    if (c === "\\") {
+      // #\<char> or #\<name> (e.g. #\Space, #\Newline). Read at least one char,
+      // then continue with alphanumerics to capture named characters.
+      if (this.eof()) throw new Error("Unexpected EOF after #\\");
+      let body = "#\\" + this.next();
+      while (!this.eof() && /[A-Za-z0-9-]/.test(this.peek())) body += this.next();
+      return new Lit(body);
+    }
+    // Unrecognized dispatch macro — consume as an opaque token to the next
+    // whitespace or list terminator. Best effort.
+    let body = "#" + c;
+    while (!this.eof() && !"()\"' \t\n\r".includes(this.peek())) {
+      body += this.next();
+    }
+    return new Lit(body);
   }
 
   readList(): Sexp {
@@ -195,6 +240,7 @@ export function print(s: Sexp): string {
   if (s instanceof Sym) return s.name;
   if (s instanceof Keyword) return ":" + s.name;
   if (s instanceof Cons) return "(" + print(s.car) + " . " + print(s.cdr) + ")";
+  if (s instanceof Lit) return s.content;
   if (Array.isArray(s)) {
     if (s.length === 0) return "nil";
     return "(" + s.map(print).join(" ") + ")";

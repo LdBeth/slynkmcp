@@ -18,6 +18,11 @@ import { asList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
 
 export type { Ctx };
 
+/** Optional package override accepted by `lisp_eval`, `lisp_completions`, etc. */
+const zPackageOverride = z.string().optional().describe(
+  "Override the default package for this call",
+);
+
 interface AproposItem {
   symbol: string;
   package: string;
@@ -92,7 +97,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
         "auto-aborted from the debugger and surfaced in the result.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
-        package: z.string().optional().describe("Override the default package for this call"),
+        package: zPackageOverride,
       },
       outputSchema: {
         value: z.string().describe("Return value"),
@@ -156,7 +161,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       description: "Flex-style symbol completions for a prefix.",
       inputSchema: {
         prefix: z.string().describe("Symbol prefix to complete"),
-        package: z.string().optional().describe("Package context for completion"),
+        package: zPackageOverride,
       },
       annotations: READ_ONLY,
     },
@@ -195,9 +200,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       ({ pattern, externalOnly }) =>
         session.aproposRaw(pattern, externalOnly).then((raw) => {
           const results = parseAproposResult(raw);
-          return {
-            structured: { results },
-          };
+          return { structured: { results } };
         }),
     ),
   );

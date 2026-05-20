@@ -115,30 +115,50 @@ export class SlynkClient {
     const promise = new Promise<Sexp>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
     });
+    let writeP: Promise<void>;
     try {
-      this.#send(print(message));
+      writeP = this.#send(print(message));
     } catch (e) {
       this.#pending.delete(id);
       throw e;
     }
+    writeP.catch((err) => {
+      const p = this.#pending.get(id);
+      if (!p) return;
+      this.#pending.delete(id);
+      p.reject(err instanceof Error ? err : new Error(String(err)));
+    });
     return promise;
   }
 
   /** Send a raw `:emacs-interrupt` for the given thread (or :repl-thread). */
   interrupt(thread: "t" | ":repl-thread" | number = ":repl-thread"): void {
-    this.#send(print([kw("emacs-interrupt"), threadSexp(thread)]));
+    this.#fireAndForget(print([kw("emacs-interrupt"), threadSexp(thread)]), "interrupt");
   }
 
   /** Send a raw channel message. */
   channelSend(channelId: number, message: Sexp): void {
-    this.#send(print([kw("emacs-channel-send"), channelId, message]));
+    this.#fireAndForget(
+      print([kw("emacs-channel-send"), channelId, message]),
+      "channelSend",
+    );
   }
 
   // ---- internals ----
 
-  #send(payload: string): void {
+  #send(payload: string): Promise<void> {
     if (!this.#writer) throw new Error("Not connected");
-    void this.#writer.write(encodeFrame(payload));
+    return this.#writer.write(encodeFrame(payload));
+  }
+
+  #fireAndForget(payload: string, label: string): void {
+    try {
+      this.#send(payload).catch((err) => {
+        console.error(`Slynk: ${label} write failed:`, err);
+      });
+    } catch (err) {
+      console.error(`Slynk: ${label} send failed:`, err);
+    }
   }
 
   async #readLoop(stream: ReadableStream<Uint8Array>): Promise<void> {
@@ -150,7 +170,11 @@ export class SlynkClient {
         console.error("Slynk: failed to parse frame:", frame, err);
         continue;
       }
-      this.#dispatch(parsed);
+      try {
+        this.#dispatch(parsed);
+      } catch (err) {
+        console.error("Slynk: dispatch failed for event:", print(parsed), err);
+      }
     }
     // Stream ended — fail any pending requests and drop per-connection state.
     for (const [, p] of this.#pending) {
@@ -275,6 +299,12 @@ export class SlynkClient {
         // (:reader-error PACKET CONDITION) — Slynk failed to parse our last
         // request. There's no id in the event, so fail the most recent pending
         // rex (highest id) — that's the one that just went out the wire.
+        //
+        // Invariant: this is only sound when at most one rex is awaiting parse
+        // at any moment. Session enforces that by serializing every rex through
+        // `#queue` (see session.ts `#runQueued`). If a future change ever lets
+        // rexes overlap, this recovery picks the wrong victim — re-examine
+        // before pipelining.
         const reason = typeof event[2] === "string" ? event[2] : print(event[2] ?? []);
         let maxId = -1;
         for (const id of this.#pending.keys()) if (id > maxId) maxId = id;
@@ -290,7 +320,7 @@ export class SlynkClient {
         // (:ping THREAD TAG) — must echo (:emacs-pong THREAD TAG)
         const t = event[1] ?? T;
         const tag = event[2] ?? 0;
-        this.#send(print([kw("emacs-pong"), t, tag]));
+        this.#fireAndForget(print([kw("emacs-pong"), t, tag]), "pong");
         return;
       }
 

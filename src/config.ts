@@ -10,12 +10,15 @@ function envStr(name: string, fallback: string): string {
   return Deno.env.get(name) ?? fallback;
 }
 
-function envInt(name: string, fallback: number): number {
+function envInt(name: string, fallback: number, min = 1): number {
   const raw = Deno.env.get(name);
   if (raw === undefined) return fallback;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n)) {
     throw new Error(`Invalid integer for ${name}: ${raw}`);
+  }
+  if (n < min) {
+    throw new Error(`${name} must be >= ${min}: got ${n}`);
   }
   return n;
 }

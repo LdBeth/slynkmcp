@@ -5,9 +5,12 @@
  *
  * Output capture: Slynk's `:write-string` and channel-send messages arrive
  * asynchronously, not tied to a request id, so we can't perfectly attribute
- * them. The pragmatic approach used here: serialize tool calls that need
- * output capture, and accumulate everything between rex-send and rex-resolve
- * into a single buffer.
+ * them. To avoid cross-contamination, every Session-level rex is serialized
+ * through `#queue`; the per-eval buffer is only set during `#evalOnce`, so
+ * concurrent non-eval rex calls can never leak `:write-string` into an
+ * eval's output. The one intentional exception is the auto-abort restart
+ * fired from `onDebugActivate` (it bypasses the queue because it must run
+ * while the rex it's aborting is still in flight).
  */
 
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
@@ -66,9 +69,9 @@ export class Session {
   readonly #host: string;
   readonly #port: number;
   readonly #connectGate = new OnceAsync<ConnectionInfo>();
-  /** Currently-capturing output buffer (set while a tool call is in flight). */
+  /** Currently-capturing output buffer (set only during `#evalOnce`). */
   #captureBuf: string[] | null = null;
-  /** Mutex queue for output-capturing calls. */
+  /** Mutex queue serializing every Session-level rex call. */
   #queue: Promise<unknown> = Promise.resolve();
   constructor(opts: SessionOptions) {
     this.defaultPackage = opts.defaultPackage;
@@ -146,40 +149,53 @@ export class Session {
       throw new SlynkUnreachableError(this.#host, this.#port, err);
     }
 
-    const info = await this.#client.rex([sym("slynk:connection-info")]);
-    const parsed = parseConnectionInfo(info);
+    try {
+      const info = await this.#client.rex([sym("slynk:connection-info")]);
+      const parsed = parseConnectionInfo(info);
 
-    await this.#client.rex(
-      [
-        sym("slynk:slynk-require"),
+      await this.#client.rex(
         [
-          sym("quote"),
-          [sym("slynk/mrepl"), sym("slynk/indentation"), sym("slynk/apropos")],
+          sym("slynk:slynk-require"),
+          [
+            sym("quote"),
+            [sym("slynk/mrepl"), sym("slynk/indentation"), sym("slynk/apropos")],
+          ],
         ],
-      ],
-    ).catch(() => {/* contribs may already be loaded */});
+      ).catch(() => {/* contribs may already be loaded */});
 
-    const channelInfo = await this.#client.rex(
-      [sym("slynk-mrepl:create-mrepl"), 0],
-      { pkg: this.defaultPackage },
-    ).catch(() => null);
+      const channelInfo = await this.#client.rex(
+        [sym("slynk-mrepl:create-mrepl"), 0],
+        { pkg: this.defaultPackage },
+      ).catch(() => null);
 
-    if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
-      this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
-      this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+      if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
+        this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
+        this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
+      }
+
+      return parsed;
+    } catch (err) {
+      // Bootstrap failed after the socket opened — tear it down so the next
+      // call attempts a fresh connection instead of reusing a wedged one.
+      await this.#client.close().catch(() => {});
+      throw err;
     }
-
-    return parsed;
   }
 
   async stop(): Promise<void> {
     await this.#client.close();
   }
 
-  /** Connect (if needed) then dispatch an rex. */
+  #runQueued<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.#queue.then(fn, fn);
+    this.#queue = next.catch(() => {});
+    return next;
+  }
+
+  /** Connect (if needed) then dispatch an rex, serialized through `#queue`. */
   async #rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
     await this.#ensureConnected();
-    return this.#client.rex(form, opts);
+    return this.#runQueued(() => this.#client.rex(form, opts));
   }
 
   public rex(form: Sexp) {
@@ -190,18 +206,20 @@ export class Session {
     return this.#rex(form, opts).then(print);
   }
 
+  // `str` coerces nil→"" and :not-available→":not-available"; `print` would
+  // render nil as "nil", losing the "nothing to show" signal.
+  #rexDisplay(form: Sexp, opts: RexOptions = {}): Promise<string> {
+    return this.#rex(form, opts).then(str);
+  }
+
   /**
    * Eval a string in the session's default package, capturing stdout.
    * Errors are auto-aborted from the debugger and surfaced as rejections.
-   * Calls are serialized so capture buffers never interleave.
    */
   async eval(code: string, pkg?: string): Promise<EvalResult> {
     await this.#ensureConnected();
     const p = pkg ?? this.defaultPackage;
-    const run = () => this.#evalOnce(code, p);
-    const next = this.#queue.then(run, run);
-    this.#queue = next.catch(() => {});
-    return next;
+    return this.#runQueued(() => this.#evalOnce(code, p));
   }
 
   async #evalOnce(code: string, pkg: string): Promise<EvalResult> {
@@ -263,37 +281,41 @@ export class Session {
     return this.aproposRaw(pattern, externalOnly).then(print);
   }
 
+  // Slynk's introspection RPCs return a string in the common case but may
+  // return nil / :not-available / an empty list for unknown symbols. Coerce
+  // through `str()` so callers always see a string (nil → "").
+
   describe(symbolName: string): Promise<string> {
-    return this.#rex(
+    return this.#rexDisplay(
       [sym("slynk:describe-symbol"), symbolName],
       { pkg: this.defaultPackage },
-    ) as Promise<string>;
+    );
   }
 
   documentation(symbolName: string): Promise<string> {
-    return this.#rex(
+    return this.#rexDisplay(
       [sym("slynk:documentation-symbol"), symbolName],
       { pkg: this.defaultPackage },
-    ) as Promise<string>;
+    );
   }
 
   arglist(symbolName: string): Promise<string> {
-    return this.#rex(
+    return this.#rexDisplay(
       [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
       { pkg: this.defaultPackage },
-    ) as Promise<string>;
+    );
   }
 
   macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    return this.#rex([sym(op), form], { pkg: this.defaultPackage }) as Promise<string>;
+    return this.#rexDisplay([sym(op), form], { pkg: this.defaultPackage });
   }
 
   findDefinition(symbolName: string): Promise<string> {
-    return this.#rex(
+    return this.#rexDisplay(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
       { pkg: this.defaultPackage },
-    ) as Promise<string>;
+    );
   }
 
   // ---- Inspector ----
@@ -321,7 +343,17 @@ export class Session {
     });
   }
 
-  /** Send :emacs-interrupt. No-op if not currently connected. */
+  /**
+   * Send `:emacs-interrupt` to the REPL thread. No-op if not currently
+   * connected.
+   *
+   * Limitation: targets the hardcoded `:repl-thread` rather than the actual
+   * thread running the in-flight eval. `slynk:interactive-eval` is dispatched
+   * to a Slynk-picked worker (thread=t) which is typically NOT `:repl-thread`,
+   * so this may not actually interrupt the running computation. Fix would
+   * require tracking the worker thread id from the rex's `:debug` / `:return`
+   * events. Not a regression — matches prior behavior.
+   */
   interrupt(): void {
     if (!this.#client.isConnected) return;
     this.#client.interrupt(":repl-thread");

@@ -21,6 +21,8 @@ export function encodeFrame(payload: string): Uint8Array {
   return out;
 }
 
+const HEADER_RE = /^[0-9a-fA-F]{6}$/;
+
 /**
  * Read framed messages from a byte stream. Yields each payload as a string.
  * Buffers partial reads across chunk boundaries.
@@ -29,38 +31,62 @@ export async function* readFrames(
   source: ReadableStream<Uint8Array>,
 ): AsyncGenerator<string> {
   const reader = source.getReader();
-  let buf: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
+  // Pending unread chunks. `head` is the byte offset into `chunks[0]` where
+  // unread data starts; everything before is logically discarded. Avoids the
+  // O(N²) reallocation pattern of growing one flat Uint8Array per chunk.
+  const chunks: Uint8Array[] = [];
+  let head = 0;
+  let total = 0; // total bytes in `chunks`, including the `head` prefix of chunks[0]
+
+  const buffered = () => total - head;
 
   const fillTo = async (n: number): Promise<boolean> => {
-    while (buf.length < n) {
+    while (buffered() < n) {
       const { value, done } = await reader.read();
       if (done) return false;
-      if (buf.length === 0) {
-        buf = value;
-      } else {
-        const next = new Uint8Array(buf.length + value.length);
-        next.set(buf, 0);
-        next.set(value, buf.length);
-        buf = next;
-      }
+      if (value.length === 0) continue;
+      chunks.push(value);
+      total += value.length;
     }
     return true;
+  };
+
+  // Consume the next `n` bytes as a contiguous Uint8Array. `fillTo(n)` must
+  // have returned true.
+  const take = (n: number): Uint8Array => {
+    const out = new Uint8Array(n);
+    let written = 0;
+    while (written < n) {
+      const c = chunks[0]!;
+      const avail = c.length - head;
+      const need = n - written;
+      if (need < avail) {
+        out.set(c.subarray(head, head + need), written);
+        head += need;
+        return out;
+      }
+      out.set(c.subarray(head), written);
+      written += avail;
+      chunks.shift();
+      total -= c.length;
+      head = 0;
+    }
+    return out;
   };
 
   try {
     while (true) {
       if (!(await fillTo(6))) return;
-      const headerStr = decoder.decode(buf.subarray(0, 6));
-      const len = Number.parseInt(headerStr, 16);
-      if (!Number.isFinite(len)) {
+      const headerStr = decoder.decode(take(6));
+      if (!HEADER_RE.test(headerStr)) {
         throw new Error(`Invalid frame header: ${JSON.stringify(headerStr)}`);
       }
-      if (!(await fillTo(6 + len))) {
+      // The regex bounds len to [0, 0xffffff], so it can't exceed encodeFrame's cap.
+      const len = Number.parseInt(headerStr, 16);
+      if (!(await fillTo(len))) {
         throw new Error("Stream ended mid-frame");
       }
-      const payload = decoder.decode(buf.subarray(6, 6 + len));
-      buf = buf.slice(6 + len);
-      yield payload;
+      yield decoder.decode(take(len));
     }
   } finally {
     reader.releaseLock();

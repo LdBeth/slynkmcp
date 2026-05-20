@@ -10,6 +10,9 @@
 export class OnceAsync<T = void> {
   #inFlight: Promise<T> | null = null;
   #result: { value: T } | null = null;
+  // Bumped by `reset()` so that an init() resolving after reset can't write
+  // its stale value into #result or clear a freshly-started #inFlight.
+  #gen = 0;
 
   get done(): boolean {
     return this.#result !== null;
@@ -18,13 +21,14 @@ export class OnceAsync<T = void> {
   run(init: () => Promise<T>): Promise<T> {
     if (this.#result) return Promise.resolve(this.#result.value);
     if (this.#inFlight) return this.#inFlight;
+    const gen = this.#gen;
     const p = (async () => {
       try {
         const v = await init();
-        this.#result = { value: v };
+        if (this.#gen === gen) this.#result = { value: v };
         return v;
       } finally {
-        this.#inFlight = null;
+        if (this.#gen === gen) this.#inFlight = null;
       }
     })();
     this.#inFlight = p;
@@ -32,6 +36,7 @@ export class OnceAsync<T = void> {
   }
 
   reset(): void {
+    this.#gen++;
     this.#result = null;
     this.#inFlight = null;
   }

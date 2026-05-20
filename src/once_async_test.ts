@@ -94,3 +94,30 @@ Deno.test("OnceAsync: reset() lets init run again", async () => {
   await gate.run(init);
   assertEquals(calls, 2);
 });
+
+Deno.test("OnceAsync: reset() during in-flight init discards the stale value", async () => {
+  const gate = new OnceAsync<number>();
+  let resolveFirst!: (v: number) => void;
+  let resolveSecond!: (v: number) => void;
+  let calls = 0;
+  const init = () => {
+    calls++;
+    return new Promise<number>((r) => {
+      if (calls === 1) resolveFirst = r;
+      else resolveSecond = r;
+    });
+  };
+  // First call starts init #1 (will resolve with 1, but to a now-dead generation).
+  const first = gate.run(init);
+  gate.reset();
+  // Second call starts a fresh init #2 (will resolve with 2).
+  const second = gate.run(init);
+  resolveFirst(1);
+  resolveSecond(2);
+  assertEquals(await first, 1); // original caller still gets what it awaited
+  assertEquals(await second, 2);
+  // Third call must see the live value (2), not the stale memoized one.
+  const third = await gate.run(init);
+  assertEquals(third, 2);
+  assertEquals(calls, 2);
+});

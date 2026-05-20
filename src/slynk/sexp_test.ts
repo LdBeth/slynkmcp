@@ -8,6 +8,7 @@ import {
   isSym,
   Keyword,
   kw,
+  Lit,
   NIL,
   print,
   read,
@@ -80,6 +81,36 @@ Deno.test("read - dotted tail with proper list head", () => {
 
 Deno.test("read - rejects trailing data", () => {
   assertThrows(() => read("1 2"));
+});
+
+Deno.test("read - #<...> preserved as Lit and round-trips", () => {
+  const v = read("#<FUNCTION FOO>");
+  assertEquals(v instanceof Lit, true);
+  assertEquals((v as Lit).content, "#<FUNCTION FOO>");
+  assertEquals(print(v), "#<FUNCTION FOO>");
+});
+
+Deno.test("read - #<...> inside a list", () => {
+  const v = read("(:value #<HASH-TABLE :TEST EQL> 0)") as unknown[];
+  assertEquals((v[0] as Keyword).name, "value");
+  assertEquals(v[1] instanceof Lit, true);
+  assertEquals((v[1] as Lit).content, "#<HASH-TABLE :TEST EQL>");
+  assertEquals(v[2], 0);
+});
+
+Deno.test("read - #\\Space character literal", () => {
+  const v = read("#\\Space");
+  assertEquals(v instanceof Lit, true);
+  assertEquals((v as Lit).content, "#\\Space");
+});
+
+Deno.test("read - #\\a single-char literal", () => {
+  const v = read("#\\a");
+  assertEquals((v as Lit).content, "#\\a");
+});
+
+Deno.test("read - unterminated #< throws", () => {
+  assertThrows(() => read("#<oops"));
 });
 
 Deno.test("print - round-trips simple forms", () => {

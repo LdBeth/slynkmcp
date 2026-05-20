@@ -49,7 +49,7 @@ function parseSearchResult(
 export const opusmodusPlugin: Plugin = {
   name: "opusmodus",
   instructions: `Opusmodus: 'om_audition_snippet', 'om_stop' plays/stop omn snippet, ` +
-    `'om_function_search' search functions. `,
+    `'om_function_search' search functions.`,
   register(server: McpServer, ctx) {
     const { session } = ctx;
 
@@ -114,6 +114,10 @@ export const opusmodusPlugin: Plugin = {
     });
 
     const PROPERTY_FIELDS = ["category", "operation", "input", "output", "intent"] as const;
+    // Property values from `om:function-property-values` are CL symbol names.
+    // Restrict to a conservative subset so we can't synthesize reader errors
+    // by interpolating arbitrary user strings into `om::<value>`.
+    const PROPERTY_VALUE_RE = /^[A-Za-z0-9*+!?<>=/\-]+$/;
 
     server.registerTool(
       "om_function_search",
@@ -153,6 +157,15 @@ export const opusmodusPlugin: Plugin = {
         ({ category, operation, input, output, intent }) => {
           const args = { category, operation, input, output, intent };
           const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
+          for (const f of provided) {
+            const v = args[f]!;
+            if (!PROPERTY_VALUE_RE.test(v)) {
+              throw new Error(
+                `om_function_search: invalid ${f} value ${JSON.stringify(v)} — ` +
+                  `expected a symbol name from the no-arg listing`,
+              );
+            }
+          }
           const form: Sexp = provided.length === 0
             ? [
               sym("cl:list"),
