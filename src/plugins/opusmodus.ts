@@ -9,7 +9,7 @@
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
 import { err, READ_ONLY } from "../mcp/tool_helpers.ts";
-import { asList, Cons, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
+import { asList, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
 /** Return the local name of a symbol, stripping the package prefix if present. */
