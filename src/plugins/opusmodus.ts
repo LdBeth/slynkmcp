@@ -12,24 +12,6 @@ import { err, READ_ONLY } from "../mcp/tool_helpers.ts";
 import { asList, Cons, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
-/**
- * Walk a result s-expr and strip the package prefix from every symbol name,
- * leaving only the local part (`opusmodus:filter` → `filter`,
- * `common-lisp::sort` → `sort`). Slynk prints symbols qualified relative to
- * the rex thread's `*package*`, so `om:function-search` results arrive full of
- * `opusmodus:`/`common-lisp:` noise the model does not need. Keywords are left
- * intact — they are the plist field names (`:category`, `:output`, …).
- */
-function stripPackages(s: Sexp): Sexp {
-  if (s instanceof Sym) {
-    const i = s.name.lastIndexOf(":");
-    return i >= 0 ? sym(s.name.slice(i + 1)) : s;
-  }
-  if (s instanceof Cons) return new Cons(stripPackages(s.car), stripPackages(s.cdr));
-  if (Array.isArray(s)) return s.map(stripPackages);
-  return s;
-}
-
 /** Return the local name of a symbol, stripping the package prefix if present. */
 function localName(s: Sexp): string {
   if (s instanceof Sym) {
@@ -185,9 +167,8 @@ export const opusmodusPlugin: Plugin = {
         try {
           const raw = await session.rex(form);
           const structured = parseSearchResult(raw, PROPERTY_FIELDS);
-          const text = print(stripPackages(raw));
           return {
-            content: [{ type: "text" as const, text: ctx.session.truncate("search", text, ctx.maxResultChars) }],
+            content: [],
             structuredContent: structured as Record<string, unknown>,
           };
         } catch (e) {
