@@ -11,7 +11,7 @@
  */
 
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types";
-import type { EvalResult, Session } from "../session.ts";
+import type { Session } from "../session.ts";
 
 export interface Ctx {
   session: Session;
@@ -45,10 +45,6 @@ export function txt(text: string): CallToolResult {
 
 export function err(text: string): CallToolResult {
   return { content: [{ type: "text", text }], isError: true };
-}
-
-export function formatEvalResult(r: EvalResult): string {
-  return (r.output ? `[stdout]\n${r.output}\n[value]\n` : "") + r.value;
 }
 
 /**
@@ -85,13 +81,13 @@ export function asyncHandler<A>(
 export function asyncStructuredHandler<A>(
   ctx: Ctx,
   kind: string,
-  op: (args: A) => Promise<{ text: string; structured: Record<string, unknown> }>,
+  op: (args: A) => Promise<{ structured: Record<string, unknown> }>,
 ): (args: A) => Promise<CallToolResult> {
   return async (args) => {
     try {
-      const { text, structured } = await op(args);
+      const { structured } = await op(args);
       return {
-        content: [{ type: "text", text: ctx.session.truncate(kind, text, ctx.maxResultChars) }],
+        content: [],
         structuredContent: structured,
       };
     } catch (e) {

@@ -10,7 +10,6 @@ import {
   asyncStructuredHandler,
   type Ctx,
   err,
-  formatEvalResult,
   MUTATING,
   READ_ONLY,
   txt,
@@ -106,7 +105,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       "eval",
       ({ code, package: pkg }) =>
         session.eval(code, pkg).then((r) => ({
-          text: formatEvalResult(r),
           structured: { value: r.value, print: r.output },
         })),
     ),
@@ -202,7 +200,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
         session.aproposRaw(pattern, externalOnly).then((raw) => {
           const results = parseAproposResult(raw);
           return {
-            text: print(raw),
             structured: { results },
           };
         }),

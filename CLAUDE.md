@@ -49,9 +49,9 @@ triggers auto-abort via `slynk:invoke-nth-restart-for-emacs` targeting the `ABOR
 Register async tools by calling `server.registerTool(name, config, asyncHandler(ctx, kind, op))`
 directly (see `src/mcp/tools.ts` and plugins). `asyncHandler` (`src/mcp/tool_helpers.ts`) wraps an
 `op: (args) => Promise<string>` with handle truncation and error→`isError` conversion.
-`asyncHandler<A>` is generic over the *resolved* args object type, not the raw Zod shape, so it
-sidesteps the SDK's deferred `ToolCallback` conditional: the literal `config` at each call site
-pins the input shape, TS resolves the conditional, and `op` gets typed `args` — no casts.
+`asyncHandler<A>` is generic over the _resolved_ args object type, not the raw Zod shape, so it
+sidesteps the SDK's deferred `ToolCallback` conditional: the literal `config` at each call site pins
+the input shape, TS resolves the conditional, and `op` gets typed `args` — no casts.
 
-**Import the SDK without `.js`** — `@modelcontextprotocol/sdk/server/mcp`, not `…/mcp.js`. The
-`.js` path resolves `McpServer` to `any`, silently disabling all `registerTool` typechecking.
+**Import the SDK without `.js`** — `@modelcontextprotocol/sdk/server/mcp`, not `…/mcp.js`. The `.js`
+path resolves `McpServer` to `any`, silently disabling all `registerTool` typechecking.
