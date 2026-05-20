@@ -101,8 +101,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     asyncStructuredHandler(
-      ctx,
-      "eval",
       ({ code, package: pkg }) =>
         session.eval(code, pkg).then((r) => ({
           structured: { value: r.value, print: r.output },
@@ -194,8 +192,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     asyncStructuredHandler(
-      ctx,
-      "apropos",
       ({ pattern, externalOnly }) =>
         session.aproposRaw(pattern, externalOnly).then((raw) => {
           const results = parseAproposResult(raw);

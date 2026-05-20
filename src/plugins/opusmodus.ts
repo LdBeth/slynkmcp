@@ -8,7 +8,7 @@
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
-import { err, READ_ONLY } from "../mcp/tool_helpers.ts";
+import { asyncStructuredHandler, err, READ_ONLY } from "../mcp/tool_helpers.ts";
 import { asList, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
@@ -149,32 +149,30 @@ export const opusmodusPlugin: Plugin = {
         },
         annotations: READ_ONLY,
       },
-      async ({ category, operation, input, output, intent }) => {
-        const args = { category, operation, input, output, intent };
-        const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
-        const form: Sexp = provided.length === 0
-          ? [
-            sym("cl:list"),
-            ...PROPERTY_FIELDS.flatMap((f) => [
-              kw(f),
-              [sym("om:function-property-values"), kw(f)],
-            ]),
-          ]
-          : [
-            sym("om:function-search"),
-            ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
-          ];
-        try {
-          const raw = await session.rex(form);
-          const structured = parseSearchResult(raw, PROPERTY_FIELDS);
-          return {
-            content: [],
-            structuredContent: structured as Record<string, unknown>,
-          };
-        } catch (e) {
-          return err((e as Error).message);
-        }
-      },
+      asyncStructuredHandler(
+        ({ category, operation, input, output, intent }) => {
+          const args = { category, operation, input, output, intent };
+          const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);
+          const form: Sexp = provided.length === 0
+            ? [
+              sym("cl:list"),
+              ...PROPERTY_FIELDS.flatMap((f) => [
+                kw(f),
+                [sym("om:function-property-values"), kw(f)],
+              ]),
+            ]
+            : [
+              sym("om:function-search"),
+              ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
+            ];
+          return session.rex(form).then((raw) => {
+            const structured = parseSearchResult(raw, PROPERTY_FIELDS);
+            return {
+              structured: structured as Record<string, unknown>,
+            };
+          });
+        },
+      ),
     );
   },
 };

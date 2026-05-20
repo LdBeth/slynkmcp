@@ -79,8 +79,6 @@ export function asyncHandler<A>(
  * data directly instead of parsing the text.
  */
 export function asyncStructuredHandler<A>(
-  ctx: Ctx,
-  kind: string,
   op: (args: A) => Promise<{ structured: Record<string, unknown> }>,
 ): (args: A) => Promise<CallToolResult> {
   return async (args) => {
