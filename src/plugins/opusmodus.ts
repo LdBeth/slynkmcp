@@ -179,10 +179,7 @@ export const opusmodusPlugin: Plugin = {
               ...provided.flatMap((f) => [kw(f), [sym("quote"), sym("om::" + args[f])]]),
             ];
           return session.rex(form).then((raw) => {
-            const structured = parseSearchResult(raw, PROPERTY_FIELDS);
-            return {
-              structured: structured as Record<string, unknown>,
-            };
+            return parseSearchResult(raw, PROPERTY_FIELDS);
           });
         },
       ),

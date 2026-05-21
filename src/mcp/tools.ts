@@ -107,9 +107,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     },
     asyncStructuredHandler(
       ({ code, package: pkg }) =>
-        session.eval(code, pkg).then((r) => ({
-          structured: { value: r.value, print: r.output },
-        })),
+        session.eval(code, pkg).then((r) => ({ value: r.value, print: r.output })),
     ),
   );
 
@@ -199,8 +197,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     asyncStructuredHandler(
       ({ pattern, externalOnly }) =>
         session.aproposRaw(pattern, externalOnly).then((raw) => {
-          const results = parseAproposResult(raw);
-          return { structured: { results } };
+          return { results: parseAproposResult(raw) };
         }),
     ),
   );
