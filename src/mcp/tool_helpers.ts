@@ -79,7 +79,7 @@ export function asyncHandler<A>(
  * data directly instead of parsing the text.
  */
 export function asyncStructuredHandler<A>(
-  op: (args: A) => Promise<Record<string, unknown>>,
+  op: (args: A) => Promise<CallToolResult["structuredContent"]>,
 ): (args: A) => Promise<CallToolResult> {
   return async (args) => {
     try {
