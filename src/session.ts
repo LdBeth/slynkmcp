@@ -56,7 +56,7 @@ export interface EvalResult {
   /** Printed result (the value Lisp returned, as a string). */
   value: string;
   /** Captured stdout / mREPL output during the call. */
-  output: string;
+  print?: string;
 }
 
 export class Session {
@@ -230,7 +230,7 @@ export class Session {
         [sym("slynk:interactive-eval"), code],
         { pkg },
       ) as string;
-      return { value, output: buf.join("") };
+      return { value, ...(buf.length > 0 ? { print: buf.join("") } : {}) };
     } finally {
       this.#captureBuf = null;
     }

@@ -92,7 +92,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     "lisp_eval",
     {
       title: "Evaluate Lisp",
-      description: "Evaluate a Common Lisp expression in the running image. " +
+      description: "Evaluate one Common Lisp form in the running image. " +
         "Returns the printed value plus any captured stdout. Errors are " +
         "auto-aborted from the debugger and surfaced in the result.",
       inputSchema: {
@@ -101,13 +101,13 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       },
       outputSchema: {
         value: z.string().describe("Return value"),
-        print: z.string().describe("Captured stdout"),
+        print: z.string().optional().describe("Captured stdout"),
       },
       annotations: MUTATING,
     },
     asyncStructuredHandler(
       ({ code, package: pkg }) =>
-        session.eval(code, pkg).then((r) => ({ value: r.value, print: r.output })),
+        session.eval(code, pkg) as Promise<{ value: string; print?: string }>,
     ),
   );
 
