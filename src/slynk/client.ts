@@ -22,6 +22,7 @@ import {
   sym,
   T,
   tagName,
+  text,
 } from "./sexp.ts";
 
 export type DebugInfo = {
@@ -210,7 +211,7 @@ export class SlynkClient {
         } else if (isKw(status, "abort")) {
           const reason = result[1];
           p.reject(
-            new Error(`Slynk abort: ${typeof reason === "string" ? reason : print(reason ?? [])}`),
+            new Error(`Slynk abort: ${text(reason)}`),
           );
         } else {
           p.reject(new Error(`Unknown :return status: ${print(result)}`));
@@ -230,21 +231,18 @@ export class SlynkClient {
           thread,
           level,
           condition: {
-            message: typeof condList[0] === "string" ? condList[0] : print(condList[0] ?? []),
-            type: typeof condList[1] === "string" ? condList[1] : print(condList[1] ?? []),
+            message: text(condList[0]),
+            type: text(condList[1]),
           },
           restarts: restartList.map((r) => {
             const rl = asList(r, "restart");
-            return {
-              name: typeof rl[0] === "string" ? rl[0] : print(rl[0] ?? []),
-              description: typeof rl[1] === "string" ? rl[1] : print(rl[1] ?? []),
-            };
+            return { name: text(rl[0]), description: text(rl[1]) };
           }),
           frames: frameList.map((f) => {
             const fl = asList(f, "frame");
             return {
               index: typeof fl[0] === "number" ? fl[0] : 0,
-              description: typeof fl[1] === "string" ? fl[1] : print(fl[1] ?? []),
+              description: text(fl[1]),
             };
           }),
         };
@@ -275,8 +273,8 @@ export class SlynkClient {
 
       case "write-string": {
         // (:write-string TEXT [TARGET])
-        const text = typeof event[1] === "string" ? event[1] : "";
-        this.events.onWriteString?.(text, event[2] ?? []);
+        const msg = typeof event[1] === "string" ? event[1] : "";
+        this.events.onWriteString?.(msg, event[2] ?? []);
         return;
       }
 
@@ -305,7 +303,7 @@ export class SlynkClient {
         // `#queue` (see session.ts `#runQueued`). If a future change ever lets
         // rexes overlap, this recovery picks the wrong victim — re-examine
         // before pipelining.
-        const reason = typeof event[2] === "string" ? event[2] : print(event[2] ?? []);
+        const reason = text(event[2]);
         let maxId = -1;
         for (const id of this.#pending.keys()) if (id > maxId) maxId = id;
         if (maxId >= 0) {

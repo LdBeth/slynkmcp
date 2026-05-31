@@ -44,6 +44,9 @@ export async function* readFrames(
     while (buffered() < n) {
       const { value, done } = await reader.read();
       if (done) return false;
+      // Invariant D: never buffer an empty chunk. `take`'s termination depends
+      // on every chunk having length > 0 (so `avail > 0` and `written` advances);
+      // dropping this guard would let a zero-length read wedge `take` in a spin.
       if (value.length === 0) continue;
       chunks.push(value);
       total += value.length;
@@ -59,6 +62,10 @@ export async function* readFrames(
     while (written < n) {
       const c = chunks[0]!;
       const avail = c.length - head;
+      // `fillTo` guarantees invariant D (no empty chunk, head < c.length), so
+      // avail > 0 and the loop makes progress. Assert rather than spin if a
+      // future change to the buffering ever breaks that.
+      if (avail <= 0) throw new Error("framing: empty chunk in buffer (invariant D violated)");
       const need = n - written;
       if (need < avail) {
         out.set(c.subarray(head, head + need), written);

@@ -291,16 +291,17 @@ export function asNumber(s: Sexp, label = "value"): number {
   return s;
 }
 
-/** Coerce a Sexp to a string for display. Uses fallback when the value is nil/undefined. */
-export function str(s: Sexp, fallback = ""): string {
-  if (typeof s === "string") return s;
-  const v = print(s);
-  return v === "nil" ? fallback : v;
-}
-
 /** Return the name if `s` is a Sym or Keyword, otherwise undefined. */
 export function tagName(s: Sexp): string | undefined {
   if (s instanceof Sym) return s.name;
   if (s instanceof Keyword) return s.name;
   return undefined;
+}
+
+/**
+ * Coerce a Sexp to display text, taking the string fast-path and rendering
+ * `nil`/`undefined` as the literal `"nil"`.
+ */
+export function text(s: Sexp | undefined): string {
+  return typeof s === "string" ? s : print(s ?? []);
 }

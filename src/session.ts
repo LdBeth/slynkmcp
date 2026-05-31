@@ -16,7 +16,7 @@
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
 import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
-import { asList, Keyword, print, type Sexp, str, sym, T, tagName } from "./slynk/sexp.ts";
+import { asList, Keyword, print, type Sexp, sym, T, tagName, text } from "./slynk/sexp.ts";
 export interface SessionOptions {
   host: string;
   port: number;
@@ -48,7 +48,7 @@ export interface ConnectionInfo {
   features: string[];
   packageName: string;
   prompt: string;
-  version: string;
+  /* version: string; */
   raw: Sexp;
 }
 
@@ -209,7 +209,7 @@ export class Session {
   // `str` coerces nil→"" and :not-available→":not-available"; `print` would
   // render nil as "nil", losing the "nothing to show" signal.
   #rexDisplay(form: Sexp, opts: RexOptions = {}): Promise<string> {
-    return this.#rex(form, opts).then(str);
+    return this.#rex(form, opts).then(text);
   }
 
   /**
@@ -372,9 +372,8 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     return [];
   }
 
-  // plistStr = str ∘ plistGet  (equational derivation: identical loop, different return wrapper)
   function plistStr(plist: Sexp[], k: string): string {
-    return str(plistGet(plist, k));
+    return plistGet(plist, k) as string;
   }
 
   const lispImpl = asList(plistGet(plist, "lisp-implementation"), "lisp-implementation");
@@ -394,7 +393,7 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     features: features.map((f) => tagName(f) ?? print(f)),
     packageName: plistStr(pkgInfo, "name"),
     prompt: plistStr(pkgInfo, "prompt"),
-    version: str(plistGet(plist, "version"), ""),
+    /* version: plistStr(plist, "version"), */
     raw: info,
   };
 }

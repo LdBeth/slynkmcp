@@ -340,7 +340,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
           `(${ci.lisp.type})\n` +
           `machine: ${ci.machine.instance} (${ci.machine.type})\n` +
           `package: ${session.defaultPackage} (initial: ${ci.packageName}, prompt: ${ci.prompt})\n` +
-          `slynk version: ${ci.version}\n` +
+          /* `slynk version: ${ci.version}\n` + */
           `features (${ci.features.length}): ${ci.features.slice(0, 30).join(" ")}${
             ci.features.length > 30 ? " …" : ""
           }`

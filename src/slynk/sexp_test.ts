@@ -12,7 +12,6 @@ import {
   NIL,
   print,
   read,
-  str,
   Sym,
   sym,
   T,
@@ -136,36 +135,27 @@ Deno.test("print - dotted pair", () => {
   assertEquals(print(new Cons(sym("a"), sym("b"))), "(a . b)");
 });
 
-// ---- str() ----
+// ---- print() ----
 
-Deno.test("str - string passes through", () => {
-  assertEquals(str("hello"), "hello");
+Deno.test("print - number to string", () => {
+  assertEquals(print(42), "42");
+  assertEquals(print(-3.14), "-3.14");
 });
 
-Deno.test("str - number to string", () => {
-  assertEquals(str(42), "42");
-  assertEquals(str(-3.14), "-3.14");
+Deno.test("print - Sym returns name", () => {
+  assertEquals(print(sym("car")), "car");
 });
 
-Deno.test("str - Sym returns name", () => {
-  assertEquals(str(sym("car")), "car");
+Deno.test("print - T as Sym", () => {
+  assertEquals(print(T), "t");
 });
 
-Deno.test("str - T as Sym", () => {
-  assertEquals(str(T), "t");
+Deno.test("print - Keyword returns :name", () => {
+  assertEquals(print(kw("foo")), ":foo");
 });
 
-Deno.test("str - Keyword returns :name", () => {
-  assertEquals(str(kw("foo")), ":foo");
-});
-
-Deno.test("str - nil uses fallback", () => {
-  assertEquals(str(NIL), "");
-  assertEquals(str(NIL, "n/a"), "n/a");
-});
-
-Deno.test("str - Cons prints as dotted pair", () => {
-  assertEquals(str(new Cons(sym("a"), sym("b"))), "(a . b)");
+Deno.test("print - Cons prints as dotted pair", () => {
+  assertEquals(print(new Cons(sym("a"), sym("b"))), "(a . b)");
 });
 
 // ---- tagName() ----
