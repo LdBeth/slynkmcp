@@ -16,8 +16,6 @@ import {
 } from "./tool_helpers.ts";
 import { asList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
 
-export type { Ctx };
-
 /** Optional package override accepted by `lisp_eval`, `lisp_completions`, etc. */
 const zPackageOverride = z.string().optional().describe(
   "Override the default package for this call",
@@ -93,8 +91,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Evaluate Lisp",
       description: "Evaluate one Common Lisp form in the running image. " +
-        "Returns the printed value plus any captured stdout. Errors are " +
-        "auto-aborted from the debugger and surfaced in the result.",
+        "Errors are auto-aborted from the debugger.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: zPackageOverride,
