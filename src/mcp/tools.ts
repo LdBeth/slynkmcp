@@ -14,7 +14,7 @@ import {
   READ_ONLY,
   txt,
 } from "./tool_helpers.ts";
-import { asList, isList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
+import { asList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
 
 /** Optional package override accepted by `lisp_eval`, `lisp_completions`, etc. */
 const zPackageOverride = z.string().optional().describe(
@@ -28,7 +28,6 @@ interface AproposItem {
   type: string;
   documentation: string;
   arglist?: string;
-  bounds?: { start: number; end: number };
 }
 
 function parseAproposResult(raw: Sexp): AproposItem[] {
@@ -57,13 +56,6 @@ function parseAproposResult(raw: Sexp): AproposItem[] {
         case "arglist":
           result.arglist = typeof val === "string" ? val : print(val);
           break;
-        case "bounds": {
-          const b = asList(val, "bounds");
-          if (isList(b[0]) && typeof b[0][0] === "number" && typeof b[0][1] === "number") {
-            result.bounds = { start: b[0][0], end: b[0][1] };
-          }
-          break;
-        }
         case "function":
         case "variable":
         case "class":
@@ -186,7 +178,6 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
           type: z.string(),
           documentation: z.string(),
           arglist: z.string().optional(),
-          bounds: z.object({ start: z.number(), end: z.number() }).optional(),
         })),
       },
       annotations: READ_ONLY,
