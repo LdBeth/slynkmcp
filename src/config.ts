@@ -6,10 +6,6 @@ export interface Config {
   plugins: string[];
 }
 
-function envStr(name: string, fallback: string): string {
-  return Deno.env.get(name) ?? fallback;
-}
-
 function envInt(name: string, fallback: number, min = 1): number {
   const raw = Deno.env.get(name);
   if (raw === undefined) return fallback;
@@ -31,9 +27,9 @@ function envList(name: string): string[] {
 
 export function loadConfig(): Config {
   return {
-    host: envStr("SLYNK_HOST", "localhost"),
+    host: Deno.env.get("SLYNK_HOST") ?? "localhost",
     port: envInt("SLYNK_PORT", 4005),
-    defaultPackage: envStr("CL_PACKAGE", "cl-user"),
+    defaultPackage: Deno.env.get("CL_PACKAGE") ?? "cl-user",
     maxResultChars: envInt("MAX_RESULT_CHARS", 8000),
     plugins: envList("SWANKMCP_PLUGINS"),
   };

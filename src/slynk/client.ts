@@ -14,12 +14,12 @@ import {
   asList,
   asNumber,
   isKw,
+  isList,
   Keyword,
   kw,
   print,
   read,
   type Sexp,
-  sym,
   T,
   tagName,
   text,
@@ -186,7 +186,7 @@ export class SlynkClient {
   }
 
   #dispatch(event: Sexp): void {
-    if (!Array.isArray(event) || event.length === 0) {
+    if (!isList(event) || event.length === 0) {
       this.events.onUnknown?.(event);
       return;
     }
@@ -199,7 +199,7 @@ export class SlynkClient {
     switch (tag) {
       case "return": {
         // (:return (:ok VALUE) ID)  or  (:return (:abort REASON) ID)
-        const result = Array.isArray(event[1]) ? event[1] : null;
+        const result = isList(event[1]) ? event[1] : null;
         const id = typeof event[2] === "number" ? event[2] : null;
         if (!result || id === null) return;
         const p = this.#pending.get(id);
@@ -339,6 +339,3 @@ export class SlynkClient {
     }
   }
 }
-
-// Re-exports for convenience.
-export { kw, print, read, type Sexp, sym };

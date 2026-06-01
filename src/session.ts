@@ -16,7 +16,7 @@
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
 import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
-import { asList, Keyword, print, type Sexp, sym, T, tagName, text } from "./slynk/sexp.ts";
+import { asList, isList, Keyword, print, type Sexp, sym, T, tagName, text } from "./slynk/sexp.ts";
 export interface SessionOptions {
   host: string;
   port: number;
@@ -83,7 +83,7 @@ export class Session {
       },
       onChannelSend: (_cid, msg) => {
         // mREPL sends (:write-values ...) and (:write-string TEXT) channel msgs
-        if (!Array.isArray(msg) || msg.length === 0) return;
+        if (!isList(msg) || msg.length === 0) return;
         const tag = tagName(msg[0]);
         if (!tag) return;
         if (tag === "write-string" && typeof msg[1] === "string") {
@@ -133,6 +133,9 @@ export class Session {
    * reset so a later call can retry. Subsequent calls are no-ops while the
    * connection is alive.
    */
+  // Kept as a one-line wrapper (rather than inlined at the two call sites)
+  // purely to shrink the minified JS: a private `#ensureConnected()` call site
+  // mangles smaller than repeating `await this.getConnectionInfo()`.
   async #ensureConnected(): Promise<void> {
     await this.getConnectionInfo();
   }
@@ -168,7 +171,7 @@ export class Session {
         { pkg: this.defaultPackage },
       ).catch(() => null);
 
-      if (Array.isArray(channelInfo) && channelInfo.length >= 2) {
+      if (isList(channelInfo) && channelInfo.length >= 2) {
         this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
         this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
       }
@@ -260,7 +263,7 @@ export class Session {
       [sym("slynk:simple-completions"), prefix, p],
       { pkg: p },
     );
-    if (!Array.isArray(result) || !Array.isArray(result[0])) return [];
+    if (!isList(result) || !isList(result[0])) return [];
     return (result[0] as Sexp[]).filter((x): x is string => typeof x === "string");
   }
 
