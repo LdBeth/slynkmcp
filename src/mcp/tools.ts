@@ -14,7 +14,7 @@ import {
   READ_ONLY,
   txt,
 } from "./tool_helpers.ts";
-import { asList, Keyword, print, type Sexp, Sym } from "../slynk/sexp.ts";
+import { asList, Keyword, plistEntries, print, type Sexp, Sym } from "../slynk/sexp.ts";
 
 /** Optional package override accepted by `lisp_eval`, `lisp_completions`, etc. */
 const zPackageOverride = z.string().optional().describe(
@@ -41,11 +41,8 @@ function parseAproposResult(raw: Sexp): AproposItem[] {
       type: "unknown",
       documentation: "",
     };
-    for (let i = 0; i < plist.length - 1; i += 2) {
-      const key = plist[i];
-      if (!(key instanceof Keyword)) continue;
-      const val = plist[i + 1];
-      switch (key.name) {
+    for (const [name, val] of plistEntries(plist)) {
+      switch (name) {
         case "designator": {
           const d = asList(val, "designator");
           result.symbol = typeof d[0] === "string" ? d[0] : print(d[0]);
@@ -60,7 +57,7 @@ function parseAproposResult(raw: Sexp): AproposItem[] {
         case "variable":
         case "class":
         case "macro":
-          result.type = key.name;
+          result.type = name;
           result.documentation = typeof val === "string"
             ? val
             : val instanceof Keyword && val.name === "not-documented"

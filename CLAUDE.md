@@ -47,6 +47,24 @@ implemented**. If you add it: discriminate eval-vs-other requests via the `:debu
 pending-continuation ids (currently dropped at `client.ts` — the `PENDING-IDS` field of the event
 needs to be parsed and surfaced), and keep the auto-abort path as the default for non-eval tools.
 
+**Reserved extension points (not yet consumed by `Session`):**
+
+- **`SlynkClient.debugStack`** — public field; only mutated internally but exposed so a future
+  interactive-debugger plugin can read the live debug stack without going through `Session`.
+- **`SlynkEvents.onDebugReturn`** — fired after `(:debug-return ...)` clears a debug level; needed
+  by the interactive-debugger plugin to know when a restart has been invoked and the level has
+  closed.
+- **`SlynkEvents.onNewFeatures`** — fired on `(:new-features ...)` from Slynk; reserved for
+  contrib-aware clients.
+- **`SlynkEvents.onIndentationUpdate`** — fired on `(:indentation-update ...)` from Slynk; reserved
+  for IDE-style indentation integration.
+- **`SlynkEvents.onUnknown`** — catch-all for unrecognized events; reserved for debugging and future
+  protocol extensions.
+
+`Session` wires up only `onWriteString`, `onChannelSend`, `onDebugActivate`, and `onDisconnect`. Do
+not remove the remaining hooks from `SlynkEvents` or make `debugStack` private — they are
+intentional extension points for the interactive-debugger plugin described above.
+
 ## Tool registration types
 
 Register async tools by calling `server.registerTool(name, config, asyncHandler(ctx, kind, op))`

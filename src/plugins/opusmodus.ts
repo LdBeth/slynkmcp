@@ -8,8 +8,19 @@
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp";
-import { asyncStructuredHandler, err, READ_ONLY } from "../mcp/tool_helpers.ts";
-import { asList, Keyword, kw, NIL, print, read, type Sexp, Sym, sym } from "../slynk/sexp.ts";
+import { asyncSideEffect, asyncStructuredHandler, READ_ONLY } from "../mcp/tool_helpers.ts";
+import {
+  asList,
+  Keyword,
+  kw,
+  NIL,
+  plistEntries,
+  print,
+  read,
+  type Sexp,
+  Sym,
+  sym,
+} from "../slynk/sexp.ts";
 import type { Plugin } from "./types.ts";
 
 /** Return the local name of a symbol, stripping the package prefix if present. */
@@ -35,10 +46,9 @@ function parseSearchResult(
   const arr = asList(r, "function-search result");
   if (arr.length > 0 && arr[0] instanceof Keyword) {
     const properties: Record<string, string[]> = {};
-    for (let i = 0; i < arr.length - 1; i += 2) {
-      const key = arr[i];
-      if (key instanceof Keyword && (fields as readonly string[]).includes(key.name)) {
-        properties[key.name] = asList(arr[i + 1], key.name).map(localName);
+    for (const [name, val] of plistEntries(arr)) {
+      if ((fields as readonly string[]).includes(name)) {
+        properties[name] = asList(val, name).map(localName);
       }
     }
     return { properties };
@@ -73,45 +83,34 @@ export const opusmodusPlugin: Plugin = {
           openWorldHint: true,
         },
       },
-      async ({ snippet }) => {
-        // rex evaluates the form directly, bypassing the `session.eval` verbose
-        // wrapper above — so re-apply the (om::*do-verbose* nil) binding here.
-        // The snippet is parsed into an s-expr and quoted as the call argument.
-        try {
-          const form: Sexp = [
-            sym("cl:let"),
-            [[sym("om::*do-verbose*"), NIL]],
-            [sym("om:audition-musicxml-omn-snippet"), [sym("quote"), read(snippet)]],
-          ];
-          await session.rex(form);
-          // Success is silent — audition is a side effect, there is no value.
-          return { content: [] };
-        } catch (e) {
-          return err((e as Error).message);
-        }
-      },
+      asyncSideEffect(({ snippet }: { snippet: string }) => {
+        const form: Sexp = [
+          sym("cl:let"),
+          [[sym("om::*do-verbose*"), NIL]],
+          [sym("om:audition-musicxml-omn-snippet"), [sym("quote"), read(snippet)]],
+        ];
+        return session.rex(form);
+      }),
     );
 
-    server.registerTool("om_stop", {
-      title: "Stop Opusmodus audition",
-      description: "Stop any currently playing Opusmodus audition. " +
-        "Idempotent — safe to call when nothing is playing.",
-      inputSchema: {},
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: true,
+    server.registerTool(
+      "om_stop",
+      {
+        title: "Stop Opusmodus audition",
+        description: "Stop any currently playing Opusmodus audition. " +
+          "Idempotent — safe to call when nothing is playing.",
+        inputSchema: {},
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
       },
-    }, async () => {
-      try {
-        await session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]]);
-        // Success is silent — stopping is a side effect, there is no value.
-        return { content: [] };
-      } catch (e) {
-        return err((e as Error).message);
-      }
-    });
+      asyncSideEffect(() =>
+        session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]])
+      ),
+    );
 
     const PROPERTY_FIELDS = ["category", "operation", "input", "output", "intent"] as const;
     // Property values from `om:function-property-values` are CL symbol names.

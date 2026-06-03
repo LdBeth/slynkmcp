@@ -16,7 +16,17 @@
 import { type RexOptions, SlynkClient } from "./slynk/client.ts";
 import { OnceAsync } from "./once_async.ts";
 import { type Handle, HandleStore, maybeTruncate } from "./handles.ts";
-import { asList, isList, Keyword, print, type Sexp, sym, T, tagName, text } from "./slynk/sexp.ts";
+import {
+  asList,
+  isList,
+  plistEntries,
+  print,
+  type Sexp,
+  sym,
+  T,
+  tagName,
+  text,
+} from "./slynk/sexp.ts";
 export interface SessionOptions {
   host: string;
   port: number;
@@ -61,8 +71,6 @@ export interface EvalResult {
 
 export class Session {
   #client: SlynkClient;
-  private mreplChannelId: number | null = null;
-  private mreplRemoteId: number | null = null;
   public defaultPackage: string;
   #store = new HandleStore();
 
@@ -105,8 +113,6 @@ export class Session {
         }
       },
       onDisconnect: () => {
-        this.mreplChannelId = null;
-        this.mreplRemoteId = null;
         this.#connectGate.reset();
         this.#captureBuf = null;
       },
@@ -166,15 +172,10 @@ export class Session {
         ],
       ).catch(() => {/* contribs may already be loaded */});
 
-      const channelInfo = await this.#client.rex(
+      await this.#client.rex(
         [sym("slynk-mrepl:create-mrepl"), 0],
         { pkg: this.defaultPackage },
       ).catch(() => null);
-
-      if (isList(channelInfo) && channelInfo.length >= 2) {
-        this.mreplChannelId = typeof channelInfo[0] === "number" ? channelInfo[0] : null;
-        this.mreplRemoteId = typeof channelInfo[1] === "number" ? channelInfo[1] : null;
-      }
 
       return parsed;
     } catch (err) {
@@ -198,21 +199,21 @@ export class Session {
   /** Connect (if needed) then dispatch an rex, serialized through `#queue`. */
   async #rex(form: Sexp, opts: RexOptions = {}): Promise<Sexp> {
     await this.#ensureConnected();
-    return this.#runQueued(() => this.#client.rex(form, opts));
+    return this.#runQueued(() => this.#client.rex(form, { pkg: this.defaultPackage, ...opts }));
   }
 
   public rex(form: Sexp) {
-    return this.#rex(form, { pkg: this.defaultPackage });
+    return this.#rex(form);
   }
 
-  #rexStr(form: Sexp, opts: RexOptions = {}): Promise<string> {
-    return this.#rex(form, opts).then(print);
+  #rexStr(form: Sexp): Promise<string> {
+    return this.#rex(form).then(print);
   }
 
   // `str` coerces nil→"" and :not-available→":not-available"; `print` would
   // render nil as "nil", losing the "nothing to show" signal.
-  #rexDisplay(form: Sexp, opts: RexOptions = {}): Promise<string> {
-    return this.#rex(form, opts).then(text);
+  #rexDisplay(form: Sexp): Promise<string> {
+    return this.#rex(form).then(text);
   }
 
   /**
@@ -246,14 +247,12 @@ export class Session {
   compileFile(path: string, load = true): Promise<string> {
     return this.#rexStr(
       [sym("slynk:compile-file-for-emacs"), path, load ? T : []],
-      { pkg: this.defaultPackage },
     );
   }
 
   loadFile(path: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:load-file"), path],
-      { pkg: this.defaultPackage },
     );
   }
 
@@ -276,7 +275,6 @@ export class Session {
         [],
         [],
       ],
-      { pkg: this.defaultPackage },
     );
   }
 
@@ -291,33 +289,29 @@ export class Session {
   describe(symbolName: string): Promise<string> {
     return this.#rexDisplay(
       [sym("slynk:describe-symbol"), symbolName],
-      { pkg: this.defaultPackage },
     );
   }
 
   documentation(symbolName: string): Promise<string> {
     return this.#rexDisplay(
       [sym("slynk:documentation-symbol"), symbolName],
-      { pkg: this.defaultPackage },
     );
   }
 
   arglist(symbolName: string): Promise<string> {
     return this.#rexDisplay(
       [sym("slynk:operator-arglist"), symbolName, this.defaultPackage],
-      { pkg: this.defaultPackage },
     );
   }
 
   macroexpand(form: string, all = false): Promise<string> {
     const op = all ? "slynk:slynk-macroexpand-all" : "slynk:slynk-macroexpand-1";
-    return this.#rexDisplay([sym(op), form], { pkg: this.defaultPackage });
+    return this.#rexDisplay([sym(op), form]);
   }
 
   findDefinition(symbolName: string): Promise<string> {
     return this.#rexDisplay(
       [sym("slynk:find-definitions-for-emacs"), symbolName],
-      { pkg: this.defaultPackage },
     );
   }
 
@@ -326,24 +320,18 @@ export class Session {
   inspect(expression: string): Promise<string> {
     return this.#rexStr(
       [sym("slynk:init-inspector"), expression],
-      { pkg: this.defaultPackage },
     );
   }
   inspectorPart(index: number): Promise<string> {
     return this.#rexStr(
       [sym("slynk:inspect-nth-part"), index],
-      { pkg: this.defaultPackage },
     );
   }
   inspectorPop(): Promise<string> {
-    return this.#rexStr([sym("slynk:inspector-pop")], {
-      pkg: this.defaultPackage,
-    });
+    return this.#rexStr([sym("slynk:inspector-pop")]);
   }
   inspectorReinspect(): Promise<string> {
-    return this.#rexStr([sym("slynk:inspector-reinspect")], {
-      pkg: this.defaultPackage,
-    });
+    return this.#rexStr([sym("slynk:inspector-reinspect")]);
   }
 
   /**
@@ -368,9 +356,8 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
   const plist = asList(info, "connection-info");
 
   function plistGet(plist: Sexp[], k: string): Sexp {
-    for (let i = 0; i < plist.length - 1; i += 2) {
-      const key = plist[i];
-      if (key instanceof Keyword && key.name === k) return plist[i + 1];
+    for (const [name, val] of plistEntries(plist)) {
+      if (name === k) return val;
     }
     return [];
   }

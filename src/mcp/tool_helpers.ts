@@ -93,3 +93,20 @@ export function asyncStructuredHandler<A>(
     }
   };
 }
+
+/**
+ * Wrap an async side-effect op (no return value) into a tool handler.
+ * Returns empty content on success; converts thrown errors to `isError` results.
+ */
+export function asyncSideEffect<A>(
+  op: (args: A) => Promise<unknown>,
+): (args: A) => Promise<CallToolResult> {
+  return async (args) => {
+    try {
+      await op(args);
+      return { content: [] };
+    } catch (e) {
+      return err((e as Error).message);
+    }
+  };
+}

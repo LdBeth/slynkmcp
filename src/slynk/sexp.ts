@@ -305,3 +305,10 @@ export function tagName(s: Sexp): string | undefined {
 export function text(s: Sexp | undefined): string {
   return typeof s === "string" ? s : print(s ?? []);
 }
+
+export function* plistEntries(plist: Sexp[]): Generator<[string, Sexp]> {
+  for (let i = 0; i < plist.length - 1; i += 2) {
+    const key = plist[i];
+    if (key instanceof Keyword) yield [key.name, plist[i + 1]!];
+  }
+}
