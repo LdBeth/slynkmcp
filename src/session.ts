@@ -354,6 +354,9 @@ export class Session {
 function parseConnectionInfo(info: Sexp): ConnectionInfo {
   // Slynk returns a property list: (:pid N :lisp-implementation (...) ...)
   const plist = asList(info, "connection-info");
+  // Five keys are read from this same top-level plist below; build one lookup
+  // table in a single pass instead of re-scanning `plist` per key.
+  const table = new Map(plistEntries(plist));
 
   function plistGet(plist: Sexp[], k: string): Sexp {
     for (const [name, val] of plistEntries(plist)) {
@@ -366,11 +369,11 @@ function parseConnectionInfo(info: Sexp): ConnectionInfo {
     return plistGet(plist, k) as string;
   }
 
-  const lispImpl = asList(plistGet(plist, "lisp-implementation"), "lisp-implementation");
-  const machine = asList(plistGet(plist, "machine"), "machine");
-  const features = asList(plistGet(plist, "features"), "features");
-  const pkgInfo = asList(plistGet(plist, "package"), "package");
-  const pid = plistGet(plist, "pid");
+  const lispImpl = asList(table.get("lisp-implementation") ?? [], "lisp-implementation");
+  const machine = asList(table.get("machine") ?? [], "machine");
+  const features = asList(table.get("features") ?? [], "features");
+  const pkgInfo = asList(table.get("package") ?? [], "package");
+  const pid = table.get("pid") ?? [];
 
   return {
     pid: typeof pid === "number" ? pid : 0,

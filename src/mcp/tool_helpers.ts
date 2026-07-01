@@ -48,6 +48,26 @@ export function err(text: string): CallToolResult {
 }
 
 /**
+ * Shared shell for all three handler wrappers below: run `op`, project a
+ * successful result through `onSuccess`, and convert any thrown error into an
+ * `isError` result. `asyncHandler`, `asyncStructuredHandler`, and
+ * `asyncSideEffect` differ only in `onSuccess` — factored out here so the
+ * try/catch is written once.
+ */
+function toResultHandler<A, R>(
+  op: (args: A) => Promise<R>,
+  onSuccess: (result: R) => CallToolResult,
+): (args: A) => Promise<CallToolResult> {
+  return async (args) => {
+    try {
+      return onSuccess(await op(args));
+    } catch (e) {
+      return err((e as Error).message);
+    }
+  };
+}
+
+/**
  * Wrap an async `op` into a tool handler: run `op`, truncate its result string
  * through the session handle store (keyed by `kind`), and convert any thrown
  * error into an `isError` result.
@@ -62,14 +82,7 @@ export function asyncHandler<A>(
   kind: string,
   op: (args: A) => Promise<string>,
 ): (args: A) => Promise<CallToolResult> {
-  return async (args) => {
-    try {
-      const text = await op(args);
-      return txt(ctx.session.truncate(kind, text, ctx.maxResultChars));
-    } catch (e) {
-      return err((e as Error).message);
-    }
-  };
+  return toResultHandler(op, (text) => txt(ctx.session.truncate(kind, text, ctx.maxResultChars)));
 }
 
 /**
@@ -81,17 +94,7 @@ export function asyncHandler<A>(
 export function asyncStructuredHandler<A>(
   op: (args: A) => Promise<CallToolResult["structuredContent"]>,
 ): (args: A) => Promise<CallToolResult> {
-  return async (args) => {
-    try {
-      const structured = await op(args);
-      return {
-        content: [],
-        structuredContent: structured,
-      };
-    } catch (e) {
-      return err((e as Error).message);
-    }
-  };
+  return toResultHandler(op, (structured) => ({ content: [], structuredContent: structured }));
 }
 
 /**
@@ -101,12 +104,5 @@ export function asyncStructuredHandler<A>(
 export function asyncSideEffect<A>(
   op: (args: A) => Promise<unknown>,
 ): (args: A) => Promise<CallToolResult> {
-  return async (args) => {
-    try {
-      await op(args);
-      return { content: [] };
-    } catch (e) {
-      return err((e as Error).message);
-    }
-  };
+  return toResultHandler(op, () => ({ content: [] }));
 }
