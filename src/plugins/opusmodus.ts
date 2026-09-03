@@ -83,7 +83,7 @@ export const opusmodusPlugin: Plugin = {
           openWorldHint: true,
         },
       },
-      asyncSideEffect(({ snippet }: { snippet: string }) => {
+      asyncSideEffect(ctx, ({ snippet }: { snippet: string }) => {
         const form: Sexp = [
           sym("cl:let"),
           [[sym("om::*do-verbose*"), NIL]],
@@ -107,8 +107,9 @@ export const opusmodusPlugin: Plugin = {
           openWorldHint: true,
         },
       },
-      asyncSideEffect(() =>
-        session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]])
+      asyncSideEffect(
+        ctx,
+        () => session.rex([sym("cl:progn"), [sym("om:stop-midi")], [sym("om:stop-sound")]]),
       ),
     );
 
@@ -153,6 +154,7 @@ export const opusmodusPlugin: Plugin = {
         annotations: READ_ONLY,
       },
       asyncStructuredHandler(
+        ctx,
         ({ category, operation, input, output, intent }) => {
           const args = { category, operation, input, output, intent };
           const provided = PROPERTY_FIELDS.filter((f) => args[f] != null);

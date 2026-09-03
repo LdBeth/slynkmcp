@@ -34,18 +34,104 @@ Core RPCs: `slynk:connection-info`, `slynk:interactive-eval`, `slynk:operator-ar
 (requires loading `slynk/apropos` contrib). mREPL: `slynk-mrepl:create-mrepl` creates a channel;
 eval still uses `slynk:interactive-eval` (mREPL has no `listener-eval` RPC).
 
-Debugger flow: a Lisp error sends `(:debug ...)` then `(:debug-activate ...)`. swankmcp currently
-auto-aborts every debugger entry, regardless of which tool triggered it. On `(:debug-activate ...)`
-the client invokes `slynk:invoke-nth-restart-for-emacs` targeting the `ABORT` restart (falling back
-to the last restart by index if no `ABORT` is present) → `(:debug-return ...)` →
-`(:return (:abort
-REASON) ID)` rejects the rex, and the tool result surfaces the condition text.
+**`slynk:compile-file-for-emacs` never loads the fasl**, whatever `load-p` says:
+`slynk-compile-file*` passes `nil` for the backend's own `load-p` and only echoes the requested flag
+back in the result's LOADP field — in SLY it is the Emacs side that loads. So `Session.compileFile`
+parses the `(:compilation-result NOTES SUCCESSP DURATION LOADP FASLFILE)` list and sends
+`slynk:load-file` for the fasl itself when a load was asked for and the compile produced one. Do not
+drop that second rex: without it `lisp_compile_file` reports a clean compile while defining nothing,
+and the next call fails with an undefined function. `src/slynk/compilation.ts` owns the parse and
+the rendering (status line, load outcome, then each note with severity, location, message, and
+`:source-context` enclosing form); a failed load throws with the compilation summary prepended to
+the load error.
+
+Debugger flow: a Lisp error sends `(:debug ...)` then `(:debug-activate ...)`. swankmcp auto-aborts
+every debugger entry, regardless of which tool triggered it — but it interrogates the debugger
+first, because the frames stop existing the moment it unwinds.
+
+`src/slynk/debug.ts` owns the model: `parseDebugEvent` turns the event into a `DebugInfo`
+(condition, restarts, frames, and the `PENDING-IDS` continuation ids), `SlynkDebugError` carries
+that snapshot out as a rejection, and `formatDebugReport` renders the text the model reads. The
+report exists to answer _where the error came from_: it leads with an `Error source` headline naming
+the innermost frame Slynk could place in a file, plus the line and the snippet Slynk sends with it.
+When nothing placed, `sourceSection` says `not recorded` as a plain fact and falls back to naming
+the innermost frame `frameOrigin` classifies as `application` — on an image whose libraries ship
+without recorded source, that frame is the best answer left. (Opusmodus is such an image:
+`lisp_find_definition` on `gen-repeat` answers `Cannot resolve location: :unknown`, so no `om` frame
+can ever place and this path is the common one, not an edge case.) That fallback line reads
+`Innermost application frame:` and **not** "your own code": on this image an application frame is
+routinely a library's, and a live LispWorks test with the old wording presented
+`(error #<undefined-function …>)` as the caller's own code. Its three variants are probing disabled,
+a stack that is entirely host and Slynk frames, and N probed frames with none placed; the last two
+both end with the `lisp_compile_file` remedy, plus the caveat that LispWorks eliminates tail calls —
+a caller whose body ends in the failing call leaves no frame at all, and compiling from a file
+cannot conjure back one the compiler removed.
+
+1. `client.ts` parses `(:debug ...)` and files the `DebugInfo` under every parked rex id from
+   `PENDING-IDS` (falling back to the highest pending id, sound for the same serialization reason as
+   `:reader-error`). **First entry wins** — a nested level raised by the detail rexes below must not
+   overwrite the caller's original condition.
+2. `Session.#handleDebug` (`session.ts`) collects `slynk:backtrace` when `SLYNK_DEBUG_FRAMES`
+   (default 32) exceeds the 20 frames Slynk volunteers, then classifies the frames before spending
+   any probe on them. `#resolveFramePackages` sends **one batched rex** — a `cl:list` of one
+   `cl:find-symbol` lookup per distinct frame head — and files each head's home package name back
+   onto its frames. **Classification is by home package, resolved on the Lisp side, never by the
+   package prefix printed in the frame description.** A Lisp omits the prefix for any symbol
+   accessible in `*package*`, and the default package here is `om`, which inherits `common-lisp`: so
+   `common-lisp:error` prints as bare `error`, exactly like one of the caller's own functions, and
+   only packages foreign to `om` print a prefix at all. The old rule ("a frame with no package
+   prefix is the caller's own code") was thus inverted, and worked only by accident on the frames
+   that happened to be foreign — a live LispWorks test had it name `(error #<undefined-function …>)`
+   as the user's own code. Do not reintroduce it. `homePackageForm` uses `find-symbol` rather than
+   `read-from-string` on purpose: reading would intern every junk token in a backtrace into the
+   user's package. For the same reason the form uses no `let` — even the variable names would be
+   interned — so the lookup is spelled out repeatedly instead of bound.
+3. `#locateFrames` then asks `slynk:frame-source-location` for the innermost `SLYNK_DEBUG_SOURCES`
+   frames (default 8; `0` disables the probes and the package rex with them) — one round trip each,
+   skipping Slynk's `[error printing frame]` placeholder, which won't place either, and every frame
+   `frameOrigin` (`debug.ts`) calls `library`: a package in `INFRASTRUCTURE_PACKAGES` or matching
+   `INFRASTRUCTURE_PREFIXES` (the host's `common-lisp`, `system`, `conditions`, `clos`, LispWorks
+   `hcl`/`lw`/`mp`/`dbg`, `ccl`, `excl`, plus every `slynk…` contrib and `sb-…` internal). **Do not
+   "simplify" the deny list away.** Every eval runs through `slynk:interactive-eval`, whose source
+   file is right there on disk, so without it the innermost frame carrying _any_ location is
+   routinely Slynk's own `slynk.lisp` — a live LispWorks test produced exactly that headline,
+   pointing the reader at the bridge instead of the error.
+
+   `frameOrigin` returns `application` only for a **resolved** home package; a bare head whose
+   lookup failed stays `unknown`, still probed (it might place) but never named, so a failed lookup
+   degrades to silence rather than to a confident wrong answer.
+
+   **`OPUSMODUS` is deliberately absent from the deny list, and adding it to save probes would be
+   wrong.** On that image the caller's own definitions and Opusmodus's own both live in `OPUSMODUS`,
+   because code evaluated or compiled through the bridge is read in the default package. No package
+   test separates them; what does is whether Slynk has a source location, which is what probing
+   finds out.
+
+4. `#abortDebug` invokes `slynk:invoke-nth-restart-for-emacs`, preferring the restart Slynk marks
+   with a `*` prefix (`*sly-db-quit-restart*`, which returns from the RPC), then a plain `ABORT`,
+   then the last restart. Do not go back to matching `ABORT` first: on most backends the unmarked
+   `ABORT` aborts the whole worker thread. Restarts are parsed for this choice only — they are never
+   printed, because nothing downstream can invoke one and listing them only padded the report.
+5. `(:debug-return ...)` → `(:return (:abort REASON) ID)` rejects the rex with `SlynkDebugError`,
+   and `asyncHandler` & co. render it through `describeError`, truncated into the handle store under
+   kind `error` so a long backtrace stays retrievable via `lisp_get_handle`. `REASON` is no longer a
+   report line of its own; it only fills in when the condition itself printed as nothing.
+
+Throughout: `#collectingDebug` guards re-entry, so an error inside a detail rex opens a nested level
+that is aborted immediately rather than collected, and every detail rex is capped at
+`DEBUG_RPC_TIMEOUT_MS` so a backend that stops answering can't park the tool call in the debugger.
+Frame locals are deliberately gone — no `slynk:frame-locals-and-catch-tags` call, nothing in the
+report. A live LispWorks test showed locals were usually empty on exactly the frames that mattered,
+and they were never the point; the location is. Do not add them back.
+
+`Session.#evalOnce` attaches the captured output to the error before rethrowing, so what the form
+printed before it broke survives into the report.
 
 An interactive-debugger plugin (parking the `lisp_eval` rex and exposing `lisp_debug_*` tools to
 drive restarts / frames / eval-in-frame) is an intentional extension point but is **not yet
-implemented**. If you add it: discriminate eval-vs-other requests via the `:debug` event's
-pending-continuation ids (currently dropped at `client.ts` — the `PENDING-IDS` field of the event
-needs to be parsed and surfaced), and keep the auto-abort path as the default for non-eval tools.
+implemented**. The groundwork is in place: `DebugInfo.pendingIds` already discriminates
+eval-vs-other requests, and `SlynkClient.debugStack` tracks live levels. If you add it, keep the
+auto-abort path as the default for non-eval tools.
 
 **Reserved extension points (not yet consumed by `Session`):**
 

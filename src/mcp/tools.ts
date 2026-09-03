@@ -80,7 +80,8 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     {
       title: "Evaluate Lisp",
       description: "Evaluate one Common Lisp form in the running image. " +
-        "Errors are auto-aborted from the debugger.",
+        "An error is auto-aborted from the debugger and returned as a report naming the " +
+        "condition, the file and line it was signalled at, and the backtrace.",
       inputSchema: {
         code: z.string().describe("Lisp source to evaluate"),
         package: zPackageOverride,
@@ -92,6 +93,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: MUTATING,
     },
     asyncStructuredHandler(
+      ctx,
       ({ code, package: pkg }) =>
         session.eval(code, pkg) as Promise<{ value: string; print?: string }>,
     ),
@@ -101,7 +103,9 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
     "lisp_compile_file",
     {
       title: "Compile a Lisp file",
-      description: "Compile a file. Optionally load the resulting fasl.",
+      description: "Compile a file and load the resulting fasl (load defaults to true; " +
+        "Slynk itself never loads it). Returns compiler notes with their file and line. " +
+        "Loading definitions from a file is also what makes runtime errors placeable.",
       inputSchema: {
         path: z.string().describe("Absolute path to the .lisp file"),
         load: z.boolean().optional().default(true).describe(
@@ -180,6 +184,7 @@ export function registerTools(server: McpServer, ctx: Ctx): void {
       annotations: READ_ONLY,
     },
     asyncStructuredHandler(
+      ctx,
       ({ pattern, externalOnly }) =>
         session.aproposRaw(pattern, externalOnly).then((raw) => {
           return { results: parseAproposResult(raw) };

@@ -5,13 +5,14 @@
  * RPC model: every `rex` call generates a fresh request id, sends an
  * `(:emacs-rex FORM PACKAGE THREAD ID)` frame, and resolves when the matching
  * `(:return (:ok ...) ID)` frame arrives. `(:return (:abort REASON) ID)`
- * rejects the promise. Debugger entries are always auto-aborted via the
- * `onDebugActivate` callback.
+ * rejects the promise — with a `SlynkDebugError` carrying the whole debugger
+ * snapshot when the abort came from a debugger entry we saw. Debugger entries
+ * are always auto-aborted via the `onDebugActivate` callback.
  */
 
 import { encodeFrame, readFrames } from "./framing.ts";
+import { type DebugInfo, parseDebugEvent, SlynkDebugError } from "./debug.ts";
 import {
-  asList,
   asNumber,
   isKw,
   isList,
@@ -25,13 +26,7 @@ import {
   text,
 } from "./sexp.ts";
 
-export type DebugInfo = {
-  thread: number;
-  level: number;
-  condition: { message: string; type: string };
-  restarts: { name: string; description: string }[];
-  frames: { index: number; description: string }[];
-};
+export type { DebugInfo };
 
 export interface SlynkEvents {
   onWriteString?: (text: string, target: Sexp) => void;
@@ -72,6 +67,13 @@ export class SlynkClient {
 
   /** Stack of active debug levels (innermost last). */
   debugStack: DebugInfo[] = [];
+  /**
+   * Debugger snapshot per parked rex id, so the eventual `(:abort …)` return
+   * can reject with the condition, restarts, and backtrace instead of a bare
+   * reason string. Keyed by the ids Slynk reports in the `:debug` event's
+   * PENDING-CONTINUATIONS field.
+   */
+  #debugByRequest = new Map<number, DebugInfo>();
 
   constructor(public readonly events: SlynkEvents = {}) {}
 
@@ -182,6 +184,7 @@ export class SlynkClient {
       p.reject(new Error("Slynk connection closed"));
     }
     this.#pending.clear();
+    this.#debugByRequest.clear();
     this.debugStack.length = 0;
   }
 
@@ -205,13 +208,17 @@ export class SlynkClient {
         const p = this.#pending.get(id);
         if (!p) return;
         this.#pending.delete(id);
+        const debugInfo = this.#debugByRequest.get(id);
+        this.#debugByRequest.delete(id);
         const status = result[0];
         if (isKw(status, "ok")) {
           p.resolve(result[1] ?? []);
         } else if (isKw(status, "abort")) {
-          const reason = result[1];
+          const reason = text(result[1]);
           p.reject(
-            new Error(`Slynk abort: ${text(reason)}`),
+            debugInfo
+              ? new SlynkDebugError(debugInfo, reason)
+              : new Error(`Slynk abort: ${reason}`),
           );
         } else {
           p.reject(new Error(`Unknown :return status: ${print(result)}`));
@@ -221,32 +228,24 @@ export class SlynkClient {
 
       case "debug": {
         // (:debug THREAD LEVEL CONDITION RESTARTS FRAMES PENDING-IDS)
-        const thread = asNumber(event[1]!, ":debug thread");
-        const level = asNumber(event[2]!, ":debug level");
-        const condList = asList(event[3]!, ":debug condition");
-        const restartList = asList(event[4]!, ":debug restarts");
-        const frameList = asList(event[5]!, ":debug frames");
-
-        const info: DebugInfo = {
-          thread,
-          level,
-          condition: {
-            message: text(condList[0]),
-            type: text(condList[1]),
-          },
-          restarts: restartList.map((r) => {
-            const rl = asList(r, "restart");
-            return { name: text(rl[0]), description: text(rl[1]) };
-          }),
-          frames: frameList.map((f) => {
-            const fl = asList(f, "frame");
-            return {
-              index: typeof fl[0] === "number" ? fl[0] : 0,
-              description: text(fl[1]),
-            };
-          }),
-        };
+        const info = parseDebugEvent(event);
         this.debugStack.push(info);
+        // Attribute the snapshot to every rex parked in this debugger level.
+        // Slynk reports those ids itself; the fallback covers backends that
+        // send an empty PENDING-CONTINUATIONS list and is sound for the same
+        // reason as `:reader-error` below — Session serializes all rexes.
+        const parked = info.pendingIds.filter((rexId) => this.#pending.has(rexId));
+        if (parked.length === 0) {
+          let maxId = -1;
+          for (const rexId of this.#pending.keys()) if (rexId > maxId) maxId = rexId;
+          if (maxId >= 0) parked.push(maxId);
+        }
+        // First entry wins: a nested level (an error raised by the detail
+        // rexes Session issues from inside the debugger) must not overwrite
+        // the original condition the caller is waiting to hear about.
+        for (const rexId of parked) {
+          if (!this.#debugByRequest.has(rexId)) this.#debugByRequest.set(rexId, info);
+        }
         return;
       }
 
@@ -268,6 +267,14 @@ export class SlynkClient {
           this.debugStack.pop();
         }
         this.events.onDebugReturn?.(thread, level);
+        return;
+      }
+
+      case "debug-condition": {
+        // (:debug-condition THREAD MESSAGE) — an error *inside* the debugger.
+        // Slynk reports rather than recursing; surface it on stderr so the
+        // cause isn't lost when the report we build looks thin.
+        console.error(`Slynk: debugger condition: ${text(event[2])}`);
         return;
       }
 

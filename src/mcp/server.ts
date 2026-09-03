@@ -30,7 +30,10 @@ export async function runServer(config: Config): Promise<void> {
         `Introspection: 'lisp_completions', 'lisp_apropos', 'lisp_describe_symbol', ` +
         `'lisp_documentation', 'lisp_arglist', 'lisp_macroexpand', 'lisp_find_definition'. ` +
         `Code loading: 'lisp_compile_file' (compile-for-emacs), 'lisp_load_file' (LOAD). ` +
-        `Eval errors are auto-aborted from the debugger and surfaced in the result. ` +
+        `Lisp errors are auto-aborted from the debugger; the tool result is an error report ` +
+        `naming the condition, the file and line it was signalled at, the backtrace, and any ` +
+        `output printed before the failure. Code sent as a string has no file behind it, so ` +
+        `load definitions with 'lisp_compile_file' when you want errors placed in source. ` +
         `Large results are truncated and stashed in handles; use 'lisp_get_handle' / ` +
         `'lisp_list_handles' to retrieve slices. 'lisp_interrupt' cancels a runaway computation. ` +
         `'lisp_connection_info' shows Lisp implementation, version, features, and package.` +

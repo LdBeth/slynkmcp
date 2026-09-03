@@ -3,6 +3,10 @@ export interface Config {
   port: number;
   defaultPackage: string;
   maxResultChars: number;
+  /** Backtrace frames included in a Lisp error report. */
+  debugFrames: number;
+  /** Innermost frames to ask Slynk for a source location. */
+  debugSources: number;
   plugins: string[];
 }
 
@@ -31,6 +35,13 @@ export function loadConfig(): Config {
     port: envInt("SLYNK_PORT", 4005),
     defaultPackage: Deno.env.get("CL_PACKAGE") ?? "cl-user",
     maxResultChars: envInt("MAX_RESULT_CHARS", 8000),
+    // Above slynk's *sly-db-initial-frames* (20), which field testing showed
+    // cuts real frames off deep stacks; the extra frames cost one
+    // `slynk:backtrace` round trip. Source lookups cost one round trip per
+    // frame, so only the innermost few are probed — the frame that places the
+    // error in a file is normally among them.
+    debugFrames: envInt("SLYNK_DEBUG_FRAMES", 32, 0),
+    debugSources: envInt("SLYNK_DEBUG_SOURCES", 8, 0),
     plugins: envList("SWANKMCP_PLUGINS"),
   };
 }
